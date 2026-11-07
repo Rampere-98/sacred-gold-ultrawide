@@ -78,6 +78,15 @@ vivo (ReadProcessMemory, comparando enemigos que pegaban con otros quietos): la 
 si apunta al héroe (o a su montura); los que el héroe apunta tras un clic del jugador se luchan hasta el final.
 Probado: atacó a los dos que le pegaban y dejó en paz a los que estaban quietos cerca.
 
+### Modos en el menú Inicio (`mod/auto-attack`)
+
+En la sección «Ataque automático»: contra quién lucha («Solo quien me ataca (y a quien ataco yo)» o «Buscar combate»,
+`[AutoAttack] Seek`), «Usar habilidades» y «Usar consumibles» (los mismos interruptores que `[Tactics]`), y la recogida
+(«Solo al pulsar A» o «Recoger siempre», `AutoCollect`). Recoger siempre pulsa A por el jugador cuando hay objetos en
+el radio y no hay combate; solo objetos (abrir cofres abre la ventana del baúl del pueblo), nunca antes de 2,5 s desde
+el último clic ni con el héroe andando, y lo que no se pudo coger no se repite en bucle. Probado: combate, arte de
+combate, y al acabar recoge el botín solo.
+
 ### Recogida con A (`mod/auto-attack`, `[AutoAttack] Pickup`)
 
 El autoataque ya no recoge por su cuenta (decisión del usuario: nada de «estilo bot»). La recogida es la del juego:
