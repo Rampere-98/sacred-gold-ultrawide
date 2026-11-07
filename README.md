@@ -44,14 +44,21 @@ Añade `[AutoAttack]` a
 | `Key` | 122 (F11) | Tecla que lo activa o desactiva (código virtual-key); suena un pitido distinto para cada estado. |
 | `Range` | 400 | Radio en píxeles de pantalla alrededor del héroe. |
 | `Pause` | 700 | Milisegundos sin autoataque después de pulsar un botón del ratón (moverlo no lo pausa). |
+| `Pickup` | 1 | Sin enemigos en el radio, recoge los objetos del suelo y abre cofres y otros recipientes. |
 | `Repeat` | 1000 | Cada cuántos milisegundos se repite la orden de ataque mientras el objetivo vive; 0 = una vez. |
 
 Con el autoataque activo, el héroe ataca solo al enemigo más cercano dentro del radio y, cuando muere, pasa al
 siguiente. No usa el ratón: le da al héroe la misma orden que da un clic sobre el enemigo (orden tipo 7 con el id del
 objetivo, entregada al manejador de órdenes de la criatura, vtable +0x18, como hace el manejador del ratón del juego
 en `0x6172C0`). Así el cursor queda libre y puedes usar el inventario y otras ventanas mientras pelea. Un clic tuyo
-recupera el control al momento. No actúa en menús, diálogos ni avisos, ni mientras el mando lleva el juego. Probado en
-partida: elige y mata enemigos seguidos, también con la ventana del personaje abierta.
+recupera el control al momento.
+
+Con `Pickup=1`, cuando no quedan enemigos en el radio va a por los objetos del suelo y los cofres, con la misma orden
+de clic. Los distingue por su clase (RTTI de MSVC): armas, armaduras, escudos, anillos, pociones, pergaminos, flechas
+y mejoras (`cWeapon3D`, `cArmor3D`...) se recogen, y `cChest3D` (cofres, baúles) se abre. Los postes y placas
+(`cSpecial3D`) y demás elementos fijos se ignoran. Si se queda junto a algo sin cogerlo (inventario lleno, cofre ya
+abierto) o no llega en 10 s, lo deja. No actúa en menús, diálogos ni avisos, ni mientras el mando lleva el juego. Probado en
+partida: elige y mata enemigos seguidos, también con la ventana del personaje abierta, y después recoge lo que sueltan.
 
 ### Arreglos para 32:9 (`mod/smooth-walk`, `mod/click-walk`, `mod/wide-sectors`)
 
