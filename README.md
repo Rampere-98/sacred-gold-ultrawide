@@ -70,6 +70,14 @@ acercarse o 3 s junto a él) se reintenta más tarde, hasta tres veces. No actú
 mientras el mando lleva el juego. Probado en partida: mata enemigos seguidos, también con ventanas abiertas, recoge
 oro, armas, armaduras, anillos y pociones e ignora el poste del camino.
 
+### Solo contra quien ataca (`mod/auto-attack`)
+
+Decisión del usuario: el autoataque lucha solo contra los enemigos que atacan al héroe y los que el jugador ataca. RE en
+vivo (ReadProcessMemory, comparando enemigos que pegaban con otros quietos): la criatura guarda su objetivo en +0x104
+(id) con la posición del objetivo en +0x108/+0x10C; quieta o andando, ahí hay un punto del mapa. Un enemigo cuenta
+si apunta al héroe (o a su montura); los que el héroe apunta tras un clic del jugador se luchan hasta el final.
+Probado: atacó a los dos que le pegaban y dejó en paz a los que estaban quietos cerca.
+
 ### Recogida con A (`mod/auto-attack`, `[AutoAttack] Pickup`)
 
 El autoataque ya no recoge por su cuenta (decisión del usuario: nada de «estilo bot»). La recogida es la del juego:
