@@ -70,6 +70,14 @@ acercarse o 3 s junto a él) se reintenta más tarde, hasta tres veces. No actú
 mientras el mando lleva el juego. Probado en partida: mata enemigos seguidos, también con ventanas abiertas, recoge
 oro, armas, armaduras, anillos y pociones e ignora el poste del camino.
 
+### Recogida con A (`mod/auto-attack`, `[AutoAttack] Pickup`)
+
+El autoataque ya no recoge por su cuenta (decisión del usuario: nada de «estilo bot»). La recogida es la del juego:
+la tecla A (y el botón de la barra) envía la orden 0x113 (`ENG 00618ba1`: `cOrder` con vtable `0x89095c`, el id del
+jugador en +0x0C). El mod solo la mejora: el autoataque espera mientras el héroe recoge y, cuando se queda quieto
+(0,9 s), toma uno a uno lo que quedó en `LootRange` (objetos que no alcanzó y cofres, que la A del juego no abre) con la
+orden de clic. Un clic, un golpe recibido o A otra vez lo terminan.
+
 ### Pociones automáticas (`mod/auto-potion`)
 
 `[AutoPotion]` en `SacredBild.ini` (`Enabled=1`, `FirstPercent=50`, `EmergencyPercent=25`, `Interval=1500`). Bebe una
@@ -147,6 +155,12 @@ amplios solo cambian al reiniciar el juego.
   antes de parchear (`src/game/wide_sectors.cpp`). El zoom no cambia.
 
 Compilación: el workflow del propio repo (GitHub Actions) genera `ddraw.dll`; basta sustituir el de SacredBild.
+
+**Costura en el suelo (corregida):** con 5x5 sectores la vista alejada baja más allá de los 3x3 del juego aunque su
+esquina esté dentro; el recorrido de filas del juego sigue entonces con índices de sector > 8 (10 bajo el sector de
+abajo a la izquierda), que en la rejilla 5x5 nombran otro sector: la mitad inferior se dibujaba con el suelo de otro
+sitio, sin objetos y con un borde en zigzag. Esas filas toman ahora la posición calculada desde el ancla del fotograma
+(`resolution.cpp`, `renderRowClipped`).
 
 ## Qué hay aquí
 
