@@ -84,7 +84,7 @@ Con el autoataque, cada ranura de arte (teclas 6-0) se usa según para qué sirv
 - **Curas:** solo si falta un 35 % de vida (un 25 % en apuros).
 - **Área:** solo con 3 enemigos o más junto al objetivo (2 en apuros).
 - **Golpes de un objetivo:** solo contra enemigos que lo merecen (1,8 veces más vida que el enemigo habitual, o más
-  de 6 s con el ataque normal); nunca contra los que caen en un momento.
+  de 8 s con el ataque normal); nunca contra los que caen en menos de 3 s.
 - **Mejoras:** al empezar una pelea dura, como mucho cada 45 s.
 
 El uso de cada ranura se aprende de lo que hace el arte:
