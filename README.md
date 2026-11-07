@@ -52,8 +52,14 @@ La misma rama trae dos arreglos para 32:9:
   nueva obligaba al juego a recorrerla entera: fotogramas de 60-180 ms al entrar en zonas nuevas. Ahora tiene 0x40000
   entradas (~12 MB) y andando se mantiene en 52-60 fps.
 - **Ruta automática.** Un clic cerca del borde de una pantalla de 5120 px cae a ~50 casillas, fuera del alcance del
-  buscador de rutas (±32): el héroe andaba 30 casillas y se paraba. Ahora sigue tramo a tramo hasta el punto pulsado,
-  salvo que quede bloqueado o des otra orden.
+  buscador de rutas (±32): el héroe andaba 30 casillas y se paraba. Ahora sigue tramo a tramo hasta el punto pulsado.
+  Si un tramo no encuentra camino (río, muralla), prueba tramos girados 45/90/135° y más cortos para rodearlo. Se rinde
+  tras 10 tramos sin acercarse, y se detiene si das otra orden.
+- **Esquinas negras.** El juego carga 3x3 sectores de 64x64 casillas alrededor de la cámara; en 32:9 con el zoom
+  alejado, las esquinas de la pantalla quedaban fuera y salían triángulos negros. `[Render] WideSectors=1` (por
+  defecto) carga y dibuja 5x5: el anillo exterior se pide a la caché de sectores del propio juego y se marca para que
+  no se descargue. El recorrido de filas y el agua se redirigen a una tabla de 25 sectores, y cada byte se verifica
+  antes de parchear (`src/game/wide_sectors.cpp`). El zoom no cambia.
 
 Compilación: el workflow del propio repo (GitHub Actions) genera `ddraw.dll`; basta sustituir el de SacredBild.
 
