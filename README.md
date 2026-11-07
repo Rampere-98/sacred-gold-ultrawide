@@ -44,7 +44,7 @@ Añade `[AutoAttack]` a
 | `Key` | 122 (F11) | Tecla que lo activa o desactiva (código virtual-key); suena un pitido distinto para cada estado. |
 | `Range` | 400 | Radio en píxeles de pantalla alrededor del héroe. |
 | `Pause` | 700 | Milisegundos sin autoataque después de pulsar un botón del ratón (moverlo no lo pausa). |
-| `Pickup` | 1 | Recoge los objetos del suelo y abre cofres y otros recipientes, siempre antes de atacar. |
+| `Pickup` | 1 | Recoge los objetos del suelo y abre cofres y otros recipientes, según la situación (ver abajo). |
 | `LootRange` | 800 | Radio en píxeles para buscar objetos. |
 | `Repeat` | 1000 | Cada cuántos milisegundos se repite la orden de ataque mientras el objetivo vive; 0 = una vez. |
 
@@ -54,7 +54,12 @@ objetivo, entregada al manejador de órdenes de la criatura, vtable +0x18, como 
 en `0x6172C0`). Así el cursor queda libre y puedes usar el inventario y otras ventanas mientras pelea. Un clic tuyo
 recupera el control al momento.
 
-Con `Pickup=1` los objetos del suelo van siempre primero, con la misma orden de clic. Se recoge todo lo que el juego
+Decide según la situación, como un jugador: cada 180-340 ms mira a los enemigos (distancia, si se acercan, su vida)
+y si el héroe ha perdido vida hace poco. Con amenaza (enemigos a menos de 0,45 × `Range`, acercándose o hiriéndole)
+combate primero y solo recoge lo que tiene a sus pies; sin amenaza va a lo más cercano, botín o enemigo. Se queda con
+el enemigo que combate (en el cuerpo a cuerpo «se acerca» no cuenta: hacía saltar de objetivo cada segundo), remata a
+los heridos y reacciona a un objetivo nuevo tras 220-480 ms (90-220 bajo amenaza); la orden de ataque se repite a
+intervalos irregulares. Con `Pickup=1` recoge con la misma orden de clic. Se recoge todo lo que el juego
 clasifica como objeto de suelo (lo que muestra Alt: categoría de selección 2, oro incluido), y los `cChest3D` (cofres,
 baúles; clase por RTTI de MSVC) se abren. Los postes y placas también son categoría 2 y de la misma clase que el oro
 (`cSpecial3D`); los delata el bit 0 de sus banderas (`+0x14`: poste `04000001`, armas, anillos y oro `04000000`), así
@@ -69,7 +74,7 @@ oro, armas, armaduras, anillos y pociones e ignora el poste del camino.
 
 `[AutoPotion]` en `SacredBild.ini` (`Enabled=1`, `FirstPercent=50`, `EmergencyPercent=25`, `Interval=1500`). Bebe una
 poción de curación con la tecla del propio juego (Espacio) cuando al héroe le falta tanta vida como cura una poción.
-Esa cantidad la aprende midiendo la vida ganada tras cada poción; hasta medir la primera, bebe al faltar el
+Esa cantidad la aprende midiendo la vida ganada tras cada poción (menos de 8 puntos o del 6 % es regeneración, no poción: sin pociones aprendía «cura 2» y bebía sin parar); hasta medir la primera, bebe al faltar el
 `FirstPercent` de la vida, y por debajo del `EmergencyPercent` bebe siempre. No actúa con la línea de chat abierta (el
 Espacio escribiría) ni con diálogos. Sin probar todavía en combate.
 
