@@ -1,0 +1,10 @@
+# Never commit game or third-party files
+*.exe
+*.dll
+*.pak
+Settings.cfg
+*.cfg
+SacredBild.ini
+dgVoodoo.conf
+*.c
+__pycache__/
