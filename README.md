@@ -43,13 +43,15 @@ Añade `[AutoAttack]` a
 | `Enabled` | 0 | Activo al arrancar el juego. |
 | `Key` | 122 (F11) | Tecla que lo activa o desactiva (código virtual-key); suena un pitido distinto para cada estado. |
 | `Range` | 400 | Radio en píxeles de pantalla alrededor del héroe. |
-| `Pause` | 700 | Milisegundos sin autoataque después de mover el ratón o pulsar un botón. |
+| `Pause` | 700 | Milisegundos sin autoataque después de pulsar un botón del ratón (moverlo no lo pausa). |
+| `Repeat` | 1000 | Cada cuántos milisegundos se repite la orden de ataque mientras el objetivo vive; 0 = una vez. |
 
-Con el autoataque activo y el ratón quieto, el héroe ataca al enemigo más cercano dentro del radio. Lo hace igual que
-si mantuvieras el clic izquierdo sobre él: reutiliza la selección de objetivo del mando de SacredBild y pone el cursor
-del juego sobre el enemigo, así el clic nunca cae en la HUD. Cuando ese enemigo muere, pasa al siguiente. Si mueves el
-ratón o haces clic, recuperas el control al momento. Solo actúa en el mundo (no en menús, diálogos ni ventanas
-abiertas) y nunca mientras el mando lleva el juego.
+Con el autoataque activo, el héroe ataca solo al enemigo más cercano dentro del radio y, cuando muere, pasa al
+siguiente. No usa el ratón: le da al héroe la misma orden que da un clic sobre el enemigo (orden tipo 7 con el id del
+objetivo, entregada al manejador de órdenes de la criatura, vtable +0x18, como hace el manejador del ratón del juego
+en `0x6172C0`). Así el cursor queda libre y puedes usar el inventario y otras ventanas mientras pelea. Un clic tuyo
+recupera el control al momento. No actúa en menús, diálogos ni avisos, ni mientras el mando lleva el juego. Probado en
+partida: elige y mata enemigos seguidos, también con la ventana del personaje abierta.
 
 ### Arreglos para 32:9 (`mod/smooth-walk`, `mod/click-walk`, `mod/wide-sectors`)
 
