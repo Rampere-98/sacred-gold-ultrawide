@@ -44,7 +44,8 @@ Añade `[AutoAttack]` a
 | `Key` | 122 (F11) | Tecla que lo activa o desactiva (código virtual-key); suena un pitido distinto para cada estado. |
 | `Range` | 400 | Radio en píxeles de pantalla alrededor del héroe. |
 | `Pause` | 700 | Milisegundos sin autoataque después de pulsar un botón del ratón (moverlo no lo pausa). |
-| `Pickup` | 1 | Sin enemigos en el radio, recoge los objetos del suelo y abre cofres y otros recipientes. |
+| `Pickup` | 1 | Recoge los objetos del suelo y abre cofres y otros recipientes, siempre antes de atacar. |
+| `LootRange` | 800 | Radio en píxeles para buscar objetos. |
 | `Repeat` | 1000 | Cada cuántos milisegundos se repite la orden de ataque mientras el objetivo vive; 0 = una vez. |
 
 Con el autoataque activo, el héroe ataca solo al enemigo más cercano dentro del radio y, cuando muere, pasa al
@@ -53,12 +54,24 @@ objetivo, entregada al manejador de órdenes de la criatura, vtable +0x18, como 
 en `0x6172C0`). Así el cursor queda libre y puedes usar el inventario y otras ventanas mientras pelea. Un clic tuyo
 recupera el control al momento.
 
-Con `Pickup=1`, cuando no quedan enemigos en el radio va a por los objetos del suelo y los cofres, con la misma orden
-de clic. Los distingue por su clase (RTTI de MSVC): armas, armaduras, escudos, anillos, pociones, pergaminos, flechas
-y mejoras (`cWeapon3D`, `cArmor3D`...) se recogen, y `cChest3D` (cofres, baúles) se abre. Los postes y placas
-(`cSpecial3D`) y demás elementos fijos se ignoran. Si se queda junto a algo sin cogerlo (inventario lleno, cofre ya
-abierto) o no llega en 10 s, lo deja. No actúa en menús, diálogos ni avisos, ni mientras el mando lleva el juego. Probado en
-partida: elige y mata enemigos seguidos, también con la ventana del personaje abierta, y después recoge lo que sueltan.
+Con `Pickup=1` los objetos del suelo van siempre primero, con la misma orden de clic. Se recoge todo lo que el juego
+clasifica como objeto de suelo (lo que muestra Alt: categoría de selección 2, oro incluido), y los `cChest3D` (cofres,
+baúles; clase por RTTI de MSVC) se abren. Los postes y placas también son categoría 2 y de la misma clase que el oro
+(`cSpecial3D`); los delata el bit 0 de sus banderas (`+0x14`: poste `04000001`, armas, anillos y oro `04000000`), así
+que se ignoran (y si alguno abriera su cartel, se cierra con Intro y no se vuelve a él). La orden de recoger se da una
+vez: repetirla reiniciaba la recogida. Cuando el objeto desaparece del suelo se esperan 1,3 s para no cortar la
+animación de agacharse. Lo que no coge o no alcanza (inventario lleno, cofre abierto, tras una valla: 3,5 s sin
+acercarse o 3 s junto a él) se reintenta más tarde, hasta tres veces. No actúa en menús, diálogos ni avisos, ni
+mientras el mando lleva el juego. Probado en partida: mata enemigos seguidos, también con ventanas abiertas, recoge
+oro, armas, armaduras, anillos y pociones e ignora el poste del camino.
+
+### Pociones automáticas (`mod/auto-potion`)
+
+`[AutoPotion]` en `SacredBild.ini` (`Enabled=1`, `FirstPercent=50`, `EmergencyPercent=25`, `Interval=1500`). Bebe una
+poción de curación con la tecla del propio juego (Espacio) cuando al héroe le falta tanta vida como cura una poción.
+Esa cantidad la aprende midiendo la vida ganada tras cada poción; hasta medir la primera, bebe al faltar el
+`FirstPercent` de la vida, y por debajo del `EmergencyPercent` bebe siempre. No actúa con la línea de chat abierta (el
+Espacio escribiría) ni con diálogos. Sin probar todavía en combate.
 
 ### Arreglos para 32:9 (`mod/smooth-walk`, `mod/click-walk`, `mod/wide-sectors`)
 
