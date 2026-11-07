@@ -27,6 +27,27 @@ Alternativas probadas o valoradas:
 | [PureHD](https://www.pcgamingwiki.com/wiki/Sacred#High-resolution_rendering) 1.40 | Panorámico "hasta 1080p"; instalado pero sustituido por SacredBild sin probarlo en partida. |
 | SacredBild | **Funciona.** Solo publica nightlies por ahora. |
 
+## Autoataque (fork de SacredBild)
+
+Rama [`auto-attack`](https://github.com/Rampere-98/sacred-bild/tree/auto-attack) del fork
+[Rampere-98/sacred-bild](https://github.com/Rampere-98/sacred-bild) (GPL-3, como el original). Añade `[AutoAttack]` a
+`SacredBild.ini`:
+
+| Clave | Por defecto | Qué hace |
+|---|---|---|
+| `Enabled` | 0 | Activo al arrancar el juego. |
+| `Key` | 122 (F11) | Tecla que lo activa o desactiva (código virtual-key); suena un pitido distinto para cada estado. |
+| `Range` | 400 | Radio en píxeles de pantalla alrededor del héroe. |
+| `Pause` | 700 | Milisegundos sin autoataque después de mover el ratón o pulsar un botón. |
+
+Con el autoataque activo y el ratón quieto, el héroe ataca al enemigo más cercano dentro del radio. Lo hace igual que
+si mantuvieras el clic izquierdo sobre él: reutiliza la selección de objetivo del mando de SacredBild y pone el cursor
+del juego sobre el enemigo, así el clic nunca cae en la HUD. Cuando ese enemigo muere, pasa al siguiente. Si mueves el
+ratón o haces clic, recuperas el control al momento. Solo actúa en el mundo (no en menús, diálogos ni ventanas
+abiertas) y nunca mientras el mando lleva el juego.
+
+Compilación: el workflow del propio repo (GitHub Actions) genera `ddraw.dll`; basta sustituir el de SacredBild.
+
 ## Qué hay aquí
 
 | Ruta | Contenido |
