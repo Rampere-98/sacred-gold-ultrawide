@@ -243,4 +243,7 @@ además de objetos, entradas con el bit 31: cosas fijas del mapa. Sus registros 
 `setvar`, `Powerup`: esos no se cogen. El clic del juego les da la orden 7 con el id y el punto del mundo bajo el
 cursor (`0x617939`). "Recoger siempre" ya incluye cofres; si uno abre una ventana (arcón), no se vuelve a él.
 Objetivos a más de 24 casillas por eje (el buscador de rutas cubre ±32) reciben antes una orden de andar, que la ruta
-automática divide en tramos. Pendiente: identificar qué objeto es el "escondite mágico" que el jugador ve.
+automática divide en tramos. Escondites mágicos (`VERSTECK`): no están en la lista de selección (el cursor los
+encuentra por la casilla); se buscan por la casilla de su registro, a LootRange/40 casillas. Probado: el héroe abre el
+escondite y recoge lo que sale (poción, armadura). El juego borra de la tabla el escondite usado y desplaza los
+índices, así que lo ya hecho se guarda por casilla, no por id.
