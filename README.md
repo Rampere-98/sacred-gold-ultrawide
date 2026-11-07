@@ -27,10 +27,15 @@ Alternativas probadas o valoradas:
 | [PureHD](https://www.pcgamingwiki.com/wiki/Sacred#High-resolution_rendering) 1.40 | Panorámico "hasta 1080p"; instalado pero sustituido por SacredBild sin probarlo en partida. |
 | SacredBild | **Funciona.** Solo publica nightlies por ahora. |
 
-## Autoataque (fork de SacredBild)
+## Sacred Gold ModKit (fork de SacredBild)
 
-Rama [`auto-attack`](https://github.com/Rampere-98/sacred-bild/tree/auto-attack) del fork
-[Rampere-98/sacred-bild](https://github.com/Rampere-98/sacred-bild) (GPL-3, como el original). Añade `[AutoAttack]` a
+Los mods viven en [Sacred Gold ModKit](https://github.com/Rampere-98/Sacred-Gold-ModKit) (GPL-3, como el original):
+`main` es el cuerpo principal (SacredBild sin cambios), cada mod es una rama `mod/*` y `modkit` los junta todos. Ver
+la tabla de ramas en su README.
+
+### Autoataque (`mod/auto-attack`)
+
+Añade `[AutoAttack]` a
 `SacredBild.ini`:
 
 | Clave | Por defecto | Qué hace |
@@ -46,7 +51,7 @@ del juego sobre el enemigo, así el clic nunca cae en la HUD. Cuando ese enemigo
 ratón o haces clic, recuperas el control al momento. Solo actúa en el mundo (no en menús, diálogos ni ventanas
 abiertas) y nunca mientras el mando lleva el juego.
 
-La misma rama trae dos arreglos para 32:9:
+### Arreglos para 32:9 (`mod/smooth-walk`, `mod/click-walk`, `mod/wide-sectors`)
 
 - **Tirones al andar.** Con la vista ultrawide la caché de capas del suelo (0x8000 entradas) se llenaba, y cada casilla
   nueva obligaba al juego a recorrerla entera: fotogramas de 60-180 ms al entrar en zonas nuevas. Ahora tiene 0x40000
