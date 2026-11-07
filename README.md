@@ -78,6 +78,47 @@ Esa cantidad la aprende midiendo la vida ganada tras cada poción (menos de 8 pu
 `FirstPercent` de la vida, y por debajo del `EmergencyPercent` bebe siempre. No actúa con la línea de chat abierta (el
 Espacio escribiría) ni con diálogos. Sin probar todavía en combate.
 
+### Tácticas: artes de combate y consumibles (`mod/auto-attack`, `[Tactics]`)
+
+Con el autoataque, cada ranura de arte (teclas 6-0) se usa según para qué sirve:
+- **Curas:** solo si falta un 35 % de vida (un 25 % en apuros).
+- **Área:** solo con 3 enemigos o más junto al objetivo (2 en apuros).
+- **Golpes de un objetivo:** solo contra enemigos que lo merecen (1,8 veces más vida que el enemigo habitual, o más
+  de 6 s con el ataque normal); nunca contra los que caen en un momento.
+- **Mejoras:** al empezar una pelea dura, como mucho cada 45 s.
+
+El uso de cada ranura se aprende de lo que hace el arte:
+- vida recuperada → cura;
+- varios enemigos heridos → área;
+- el objetivo herido → un objetivo;
+- nada visible con el objetivo cerca, cuatro veces → mejora.
+
+Lo aprendido queda en `[Tactics.Learned]` y se puede fijar a mano en el menú (Inicio).
+
+Cómo se lanza un arte sin ratón:
+1. La tecla de la ranura selecciona el arte (eso fija `engine+0x58`, el tipo, y `+0x5A`, el arte).
+2. Se da la misma orden que el clic derecho, tipo 0x105 por `cEngine::sendOrder`:
+   - `+0x10` objetivo; `+0x14` palabra de posición; `+0x18`/`+0x1C` x, y; `+0x28` 100;
+   - `+0x2C` tipo de arte; `+0x30` = `0x552370(arte, 0)`, que devuelve el propio id; `+0x34` capa.
+3. Después se vuelve a la ranura que tenía el jugador.
+
+Lo comprobé comparando en el log mi orden con la del clic derecho del juego.
+
+Tabla de ranuras de cada jugador: `*0xAD4448 + (id del héroe & 0xFFFF) * 0x1180`.
+- `+0xC90`: entradas de 20 bytes, dos por ranura (barra alternativa, `+0x1162` bit 1); tipo (palabra) y arte en `+4`.
+- `+0xD5A`: la ranura activa.
+
+Consumibles: `usePotion` (`0x612FA0`, thiscall sobre el motor, `(tipo, aMercenarios)`) devuelve si quedaba poción.
+Tipos: 1 curación (Espacio; B la da a los mercenarios), 2 Muerte de no-muertos (Q), 3 Mentor (W), 4 Antídoto (E),
+5 Concentración (R). Cuándo se usa cada uno:
+- **Mentor:** en peleas grandes (4 enemigos o uno fuerte), como mucho cada 2 min.
+- **Antídoto:** si la vida baja sin enemigos cerca (veneno).
+- **Concentración:** si las artes necesarias se están recargando.
+- **Muerte de no-muertos:** en apuros con 3 enemigos o más encima.
+- **Curar mercenarios:** si un aliado que acompaña al héroe más de 20 s baja del 45 %.
+
+Si no queda poción, vuelve a mirar al cabo de 60 s.
+
 ### Menú del ModKit (tecla Inicio)
 
 Inicio abre y cierra, sobre el juego y sus menús, una ventana con los ajustes de cada mod instalado (sectores
