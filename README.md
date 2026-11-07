@@ -78,6 +78,16 @@ vivo (ReadProcessMemory, comparando enemigos que pegaban con otros quietos): la 
 si apunta al héroe (o a su montura); los que el héroe apunta tras un clic del jugador se luchan hasta el final.
 Probado: atacó a los dos que le pegaban y dejó en paz a los que estaban quietos cerca.
 
+### A caballo, golpe rápido y atacantes lejanos (`mod/auto-attack`)
+
+- **A caballo:** el «controlado» (`cEngine +0x13C`) es el caballo, pero el clic sobre una criatura el juego lo manda al
+  jinete (orden tipo 7 al héroe, visto con un registro temporal de órdenes en el manejador vtable +0x18). Mandado al
+  caballo, solo se acercaba y no pegaba. Ahora la orden de ataque va al héroe si va montado. Probado: mata montado.
+- **Golpe lento:** cada orden de ataque es un golpe; repetirla cada 1000 ms pegaba una vez por segundo, mucho más lento
+  que mantener el clic. `Repeat` por defecto 200 ms.
+- **Atacantes lejanos:** los que atacan al héroe se persiguen hasta 4 veces `Range` (arqueros, magos). Sin probar con
+  arqueros.
+
 ### Modos en el menú Inicio (`mod/auto-attack`)
 
 En la sección «Ataque automático»: contra quién lucha («Solo quien me ataca (y a quien ataco yo)» o «Buscar combate»,
