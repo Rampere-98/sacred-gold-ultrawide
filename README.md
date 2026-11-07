@@ -73,6 +73,14 @@ Esa cantidad la aprende midiendo la vida ganada tras cada poción; hasta medir l
 `FirstPercent` de la vida, y por debajo del `EmergencyPercent` bebe siempre. No actúa con la línea de chat abierta (el
 Espacio escribiría) ni con diálogos. Sin probar todavía en combate.
 
+### Menú del ModKit (tecla Inicio)
+
+Inicio abre y cierra, sobre el juego y sus menús, una ventana con los ajustes de cada mod instalado (sectores
+amplios, ataque automático, pociones). Los cambios se aplican al momento; *Guardar en SacredBild.ini* los escribe en
+el ini (respeta los comentarios). Esc también la cierra. Usa la superposición Dear ImGui de SacredBild, así que pide
+`[DDraw] Backend=d3d9`. Cada mod añade su sección con `ModkitMenu::add({título, dibujar, guardar})`; los sectores
+amplios solo cambian al reiniciar el juego.
+
 ### Arreglos para 32:9 (`mod/smooth-walk`, `mod/click-walk`, `mod/wide-sectors`)
 
 - **Tirones al andar.** Con la vista ultrawide la caché de capas del suelo (0x8000 entradas) se llenaba, y cada casilla
