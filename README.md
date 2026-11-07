@@ -235,3 +235,12 @@ python tools/rea_bridge/call.py procedure_pseudo_code "{\"procedure\": \"0x64526
   dgVoodoo2 2.87.6.
 
 Licencia de los scripts y la documentación: MIT.
+
+**Recoger todo lo que muestra la mano (2026-11-07):** la lista de selección del juego (`cWorldView` +0x96B24) trae,
+además de objetos, entradas con el bit 31: cosas fijas del mapa. Sus registros están en `[0xAB45B8]` (0x58 bytes,
+índice = 16 bits bajos del id; nombre de guion en +0x18). Usables (campo +4 = 0x00010000): `BRUNNEN` (pozos),
+`F_Gold`, `VERSTECK` (marcadores sin gráfico). De texto o guion (+4 = 0.25f): `F_Stein` (runas), `Wegweiser`,
+`setvar`, `Powerup`: esos no se cogen. El clic del juego les da la orden 7 con el id y el punto del mundo bajo el
+cursor (`0x617939`). "Recoger siempre" ya incluye cofres; si uno abre una ventana (arcón), no se vuelve a él.
+Objetivos a más de 24 casillas por eje (el buscador de rutas cubre ±32) reciben antes una orden de andar, que la ruta
+automática divide en tramos. Pendiente: identificar qué objeto es el "escondite mágico" que el jugador ve.
