@@ -46,6 +46,15 @@ del juego sobre el enemigo, así el clic nunca cae en la HUD. Cuando ese enemigo
 ratón o haces clic, recuperas el control al momento. Solo actúa en el mundo (no en menús, diálogos ni ventanas
 abiertas) y nunca mientras el mando lleva el juego.
 
+La misma rama trae dos arreglos para 32:9:
+
+- **Tirones al andar.** Con la vista ultrawide la caché de capas del suelo (0x8000 entradas) se llenaba, y cada casilla
+  nueva obligaba al juego a recorrerla entera: fotogramas de 60-180 ms al entrar en zonas nuevas. Ahora tiene 0x40000
+  entradas (~12 MB) y andando se mantiene en 52-60 fps.
+- **Ruta automática.** Un clic cerca del borde de una pantalla de 5120 px cae a ~50 casillas, fuera del alcance del
+  buscador de rutas (±32): el héroe andaba 30 casillas y se paraba. Ahora sigue tramo a tramo hasta el punto pulsado,
+  salvo que quede bloqueado o des otra orden.
+
 Compilación: el workflow del propio repo (GitHub Actions) genera `ddraw.dll`; basta sustituir el de SacredBild.
 
 ## Qué hay aquí
