@@ -302,6 +302,8 @@ namespace
         const bool keep = imgui ? frame(draw, hud, window, static_cast<float>(bufferDesc.Width),
                                         static_cast<float>(bufferDesc.Height)) : true;
 
+        // The render target, depth buffer and states below are the game's device's too: keep its other thread out.
+        std::scoped_lock deviceLock(DDraw9::Gpu::stateLock());
         d9::IDirect3DSurface9* target = nullptr;
         d9::IDirect3DSurface9* depth = nullptr;
         d9::D3DVIEWPORT9 viewport = {};
