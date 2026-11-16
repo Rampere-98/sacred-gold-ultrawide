@@ -4403,10 +4403,27 @@ namespace
                 {
                     const auto* man = reinterpret_cast<const uint8_t*>(om->object(m.id));
                     const uint32_t sale = man ? *reinterpret_cast<const uint32_t*>(man + 0x570) : 0;
-                    const cCreature* h = sale ? om->creature(sale) : nullptr;
+                    // Only a horse still for sale: bound to the man both ways (its +0x570 the man, as buyHorse checks)
+                    // and not the hero's own (A8, 2026-11-16: «a better horse there» every 30 min, then the hero's
+                    // own a7 shown at the stable and nothing bought).
+                    const cCreature* h = sale && sale != ownId ? om->creature(sale) : nullptr;
+                    if (h && *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(h) + 0x570) != m.id)
+                    {
+                        h = nullptr;
+                    }
                     if (h && std::hypot(static_cast<double>(m.x - heroX), static_cast<double>(m.y - heroY)) < 60.0 * kTileSize &&
                         wayLength(heroX, heroY, m.x, m.y) < 60.0 * kTileSize && Gear::horseWorth(h) >= ownWorth + 2000)
                     {
+                        if (!better)
+                        {
+                            static uint32_t s_toldSale = 0;
+                            if (s_toldSale != sale)
+                            {
+                                s_toldSale = sale;
+                                LOG("Gear: the stable man {:x} sells horse {:x} (worth {}) against the hero's {:x} (worth {})",
+                                    m.id, sale, Gear::horseWorth(h), ownId, ownWorth);
+                            }
+                        }
                         better = true;
                     }
                 }

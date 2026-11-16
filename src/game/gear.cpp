@@ -2629,6 +2629,19 @@ namespace
         const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
         cObjectManager* objects = cObjectManager::instance();
         cCreature* horse = objects && horseId ? objects->creature(horseId) : nullptr;
+        // The window showing the hero's own horse (A8, 2026-11-16: «horse a7 for sale against the hero's a7» at a
+        // rune craftsman, after the horseshoe): not a stable's offer, so no try is spent on it; left to
+        // closeStrayHorseWindow.
+        if (horseId && horseId == *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570))
+        {
+            static DWORD s_ownToldAt = 0;
+            if (tick - s_ownToldAt > 60000)
+            {
+                s_ownToldAt = tick;
+                LOG("Gear: horse: the window shows the hero's own horse {:x}, not a stable's offer", horseId);
+            }
+            return false;
+        }
         if (!horse)
         {
             if (tick - s_openAt < 3000)
@@ -3196,8 +3209,15 @@ bool Gear::closeStrayHorseWindow(bool now)
     uint8_t* w = ui ? *reinterpret_cast<uint8_t* const*>(ui + 0xC4) : nullptr;
     // Asked at once (a dialog over it the Enter does not close), even with a horse wanted: the agent opened it itself
     // and the purchase cannot go on under the dialog; the want is dropped as after a failed try.
+    // The window showing the hero's own horse (the horseshoe opens it) is closed even with a horse wanted: no stable's
+    // offer is in it.
+    cObjectManager* om = cObjectManager::instance();
+    const cCreature* hero = om ? om->hero() : nullptr;
+    const bool ownHorse = w && hero && *reinterpret_cast<const uint32_t*>(w + 0x154) &&
+                          *reinterpret_cast<const uint32_t*>(w + 0x154) ==
+                              *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570);
     if (!w || *reinterpret_cast<const uintptr_t*>(w) != kHorseVtable || !(*reinterpret_cast<const uint32_t*>(w + 0x10) & 1) ||
-        (g_wantHorse && !now))
+        (g_wantHorse && !now && !ownHorse))
     {
         s_since = 0;
         return false;
