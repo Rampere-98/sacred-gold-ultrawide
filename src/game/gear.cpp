@@ -366,9 +366,12 @@ namespace
     // The hand the game holds a weapon in (Manolito, block AW-1: 0x5CEC00's classes, from the subclass as it reads them):
     // 1 hand 0 only (the shield's: bows, crossbows and subclass 3, the big axes), 2 both, 3 one hand (hand 1, the
     // weapon's; hand 0 only for a second weapon with the skill for two). 0: no weapon or not known.
+    bool damageOf(uint32_t id, float out[4]);
+
     int handClass(uint32_t id)
     {
-        if (!id || !worth(id).weapon)
+        float dmg[4] = {};
+        if (!id || !damageOf(id, dmg))
         {
             return 0;
         }
@@ -435,8 +438,9 @@ namespace
             // The hands (12 the shield's, 13 the weapon's): never a two-handed weapon beside what the other hand
             // holds, nor a shield beside a two-handed weapon. A player would have to empty the other hand first.
             // And a weapon only in the hand the game holds it in (the player, 2026-11-16: A2 «está sujetando mal el
-            // hacha»: a subclass-3 axe, a hand-0 weapon, had gone to 13): hand class 1 only 12, 3 only 13.
-            if ((slot == 12 && handClass(id) == 3) || (slot == 13 && handClass(id) == 1))
+            // hacha»: a subclass-3 axe, a hand-0 weapon, had gone to 13): hand class 1 never in 13. A one-handed
+            // weapon in 12 is the second weapon of the skill for two, left to the game's own test (the reviewer, M1).
+            if (slot == 13 && handClass(id) == 1)
             {
                 continue;
             }
@@ -1684,8 +1688,16 @@ namespace
             }
             if (slot == active)
             {
-                // Another slot with a weapon taken first (as the keys 1-5), this one mended at a later pass.
-                for (int other = 0; other < open; ++other)
+                // Another slot with a weapon taken first (as the keys 1-5), this one mended at a later pass. Only in
+                // the agents' copies: in the player's folder it would change his weapon while he plays (the reviewer, M2).
+                static const bool s_agentCopy = [] {
+                    wchar_t exe[MAX_PATH] = {};
+                    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+                    std::wstring dir = exe;
+                    dir = dir.substr(0, dir.find_last_of(L"\\/"));
+                    return dir.substr(dir.find_last_of(L"\\/") + 1).rfind(L"SacredA", 0) == 0;
+                }();
+                for (int other = 0; s_agentCopy && other < open; ++other)
                 {
                     if (other != slot && slotWeapon(pack, other) && GetTickCount() - g_slotSwitchAt > 20000 &&
                         !Tactics::busy(GetTickCount()) &&
@@ -1738,13 +1750,16 @@ namespace
                 return false;
             }
             fn<PutItem>(g_putItem)(pack, nullptr, cell, twoWith, w, h, 1);
+            const char* result = "done";
             if (!inBackpack(pack, twoWith))
             {
                 fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(slot), hand, twoWith, 1);
                 g_slotsReady = false;
+                result = slotItem(pack, slot, hand) == twoWith ? "the backpack refused it, put back" : "NOT DONE";
             }
             g_noPutOn[twoWith] = GetTickCount();
-            LOG("Gear: weapon slot {}: {:x} was beside a two-handed weapon: back to the backpack", slot + 1, twoWith);
+            LOG("Gear: weapon slot {}: {:x} was beside a two-handed weapon, back to the backpack: {}", slot + 1, twoWith,
+                result);
             return true;
         }
         return false;
@@ -1886,7 +1901,7 @@ namespace
         // A7, 2026-11-14), and only a free one. A weapon refused is left for 10 minutes, the slots not given up for it.
         uint32_t hand = handClass(best) == 1 ? 0u : 1u;
         int may = canDrop(static_cast<uint32_t>(empty), hand, best);
-        if (may == 4 && handClass(best) != 1 && handClass(best) != 3)
+        if (may == 4 && handClass(best) != 1)
         {
             hand ^= 1u;
             may = canDrop(static_cast<uint32_t>(empty), hand, best);
