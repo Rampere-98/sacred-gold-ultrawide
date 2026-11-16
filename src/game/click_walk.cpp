@@ -5,6 +5,7 @@
 #include "config/debug.h"
 #include "game/frame_hooks.h"
 #include "game/map_memory.h"
+#include "game/route_net.h"
 #include "game/wide_sectors.h"
 #include "game/world_tiles.h"
 #include "input/inject.h"
@@ -220,6 +221,8 @@ namespace
     // houses and cellars (another layer, which a route planned here over the hero's layer misses). Only when the hero
     // does not move (no way inside the grid: around a river) does the walk get a route.
     bool g_native = false;
+    // The last plan came to nothing because the route net was still working its trip out (on a low thread).
+    bool g_netWorking = false;
 
     bool agentOrder();
 
@@ -250,10 +253,21 @@ namespace
             partial = true;
             std::vector<std::pair<int, int>> wide;
             Cell stop = start;
-            // The narrow box first; with no way in it, the wide one (margins 120 and 240) on its own low thread, its
-            // route taken once ready (the stuck solver, 2026-11-16: A6 by a river at 3018,2675, 328 known tiles from
-            // the far side by a bend out of the 48-tile box: «NO plan» for an hour, the order straight into the water).
-            if (MapMemory::route(g_grid.layer, start.x, start.y, goal.x, goal.y, wide) ||
+            // A far goal by the route net first (worked out away from the game; live only the stretches to the nodes
+            // near each end, on a low thread): the narrow route box (48 tiles) misses ways round rivers and mountains,
+            // and over 150 tiles it held the window's thread 28-123 s (A2-A8, 2026-11-16). While the trip is worked out,
+            // no plan this time (the short straight order); with no net, or no node near, the old ways.
+            const RouteNet::Trip byNet = chebyshev(goal, start.x, start.y) > 150
+                                             ? RouteNet::trip(g_grid.layer, start.x, start.y, goal.x, goal.y, wide)
+                                             : RouteNet::Trip::None;
+            if (byNet == RouteNet::Trip::Working)
+            {
+                g_netWorking = true;
+                return false;
+            }
+            // Then the narrow box; with no way in it, the wide one (margins 120 and 240) on its own low thread (the
+            // stuck solver, 2026-11-16: A6 by a river at 3018,2675, «NO plan» for an hour into the water).
+            if (byNet == RouteNet::Trip::Ready || MapMemory::route(g_grid.layer, start.x, start.y, goal.x, goal.y, wide) ||
                 MapMemory::routeWideAsync(g_grid.layer, start.x, start.y, goal.x, goal.y, wide))
             {
                 for (const auto& [x, y] : wide)
@@ -263,6 +277,12 @@ namespace
                         break;
                     }
                     stop = {x, y};
+                }
+                static int s_netTold = 0;
+                if (byNet == RouteNet::Trip::Ready && (Config::debug.uiTrace || s_netTold++ < 200))
+                {
+                    LOG("Click walk: far goal {},{} by the route net: this stretch from {},{} to {},{}", goal.x, goal.y,
+                        start.x, start.y, stop.x, stop.y);
                 }
             }
             else
@@ -398,7 +418,11 @@ namespace
             if (!partial && !s_inFallback)
             {
                 std::vector<std::pair<int, int>> wide;
-                if (MapMemory::routeWideAsync(g_grid.layer, start.x, start.y, goal.x, goal.y, wide))
+                // The route net first (the way round may leave even the wide boxes), then the wide route.
+                const RouteNet::Trip byNet = RouteNet::trip(g_grid.layer, start.x, start.y, goal.x, goal.y, wide);
+                g_netWorking = g_netWorking || byNet == RouteNet::Trip::Working;
+                if (byNet == RouteNet::Trip::Ready ||
+                    (byNet == RouteNet::Trip::None && MapMemory::routeWideAsync(g_grid.layer, start.x, start.y, goal.x, goal.y, wide)))
                 {
                     Cell stop = start;
                     for (const auto& [x, y] : wide)
@@ -829,8 +853,19 @@ namespace
                 }
                 Cell next{};
                 g_grid.layer = layerOf(hero);
+                g_netWorking = false;
                 if (++g_route.hops > 400 || !plan(at, cellOf(g_goalX, g_goalY)) || !nextLeg(at, next))
                 {
+                    if (g_netWorking && g_route.hops <= 400)
+                    {
+                        // The route net works the trip out again (the hero off it): the next stretch on a later tick.
+                        --g_route.hops;
+                        if (stopped && toEnd > 2)
+                        {
+                            --g_route.replans;
+                        }
+                        return;
+                    }
                     finish("blocked");
                     return;
                 }

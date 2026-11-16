@@ -92,6 +92,7 @@ set(DDRAW_SOURCES
   src/game/auto_potion.cpp
   src/game/tactics.cpp
   src/game/map_memory.cpp
+  src/game/route_net.cpp
   src/game/modkit_menu.cpp
   src/game/controller.cpp
   src/game/hero_move.cpp

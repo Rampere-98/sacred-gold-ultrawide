@@ -14,7 +14,6 @@ Writes where --salida says; putting the files beside the copies is installing (t
 
 import argparse
 import heapq
-import math
 import os
 import struct
 import sys
@@ -216,49 +215,57 @@ class Grid:
         return None
 
 
+def graph(grid):
+    """The layer's known walkable tiles as a graph (8 neighbours, no corner cut; a step costs the tile entered), made
+    once: scipy's Dijkstra over it, the grid too large for one in Python."""
+    if getattr(grid, "csr", None) is not None:
+        return grid.csr
+    from scipy.sparse import csr_matrix
+    step = grid.step
+    ok = step > 0
+    idx = np.full(step.shape, -1, dtype=np.int64)
+    idx[ok] = np.arange(int(ok.sum()))
+    grid.idx = idx
+    ys, xs = np.nonzero(ok)
+    grid.cell_x, grid.cell_y = xs + grid.x0, ys + grid.y0
+    rows, cols, vals = [], [], []
+    h, w = step.shape
+    for dx, dy, m in [(1, 0, 10), (-1, 0, 10), (0, 1, 10), (0, -1, 10), (1, 1, DIAG), (1, -1, DIAG), (-1, 1, DIAG), (-1, -1, DIAG)]:
+        nx, ny = xs + dx, ys + dy
+        good = (nx >= 0) & (ny >= 0) & (nx < w) & (ny < h)
+        a, b, c, d = xs[good], ys[good], nx[good], ny[good]
+        good = ok[d, c]
+        if dx and dy:
+            good &= ok[b, c] & ok[d, a]
+        a, b, c, d = a[good], b[good], c[good], d[good]
+        rows.append(idx[b, a])
+        cols.append(idx[d, c])
+        vals.append(step[d, c].astype(np.float64) * m / 10)
+    n = int(ok.sum())
+    grid.csr = csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n))
+    return grid.csr
+
+
 def dijkstra(grid, sx, sy, limit, targets):
     """From (sx, sy) over the grid, up to cost `limit`: for each target tile reached, (cost, path tiles)."""
-    w = grid.w
-    step = grid.step
-    x0, y0 = grid.x0, grid.y0
-    start = (sy - y0) * w + (sx - x0)
-    cost = {start: 0}
-    came = {}
-    heap = [(0, start)]
-    want = {(ty - y0) * w + (tx - x0): t for t, (tx, ty) in targets.items()}
-    found = {}
-    dirs = [(1, 0, 10), (-1, 0, 10), (0, 1, 10), (0, -1, 10), (1, 1, DIAG), (1, -1, DIAG), (-1, 1, DIAG), (-1, -1, DIAG)]
-    while heap:
-        c, cell = heapq.heappop(heap)
-        if c > cost.get(cell, 1 << 60):
-            continue
-        if cell in want and want[cell] not in found:
-            found[want[cell]] = (c, cell)
-            if len(found) == len(want):
-                break
-        y, x = divmod(cell, w)
-        for dx, dy, m in dirs:
-            nx, ny = x + dx, y + dy
-            if nx < 0 or ny < 0 or nx >= w or ny >= grid.h:
-                continue
-            s = step[ny, nx]
-            if not s or (dx and dy and (not step[y, nx] or not step[ny, x])):
-                continue
-            nc = c + s * m // 10
-            if nc > limit:
-                continue
-            n = ny * w + nx
-            if nc < cost.get(n, 1 << 60):
-                cost[n] = nc
-                came[n] = cell
-                heapq.heappush(heap, (nc, n))
+    from scipy.sparse.csgraph import dijkstra as sp_dijkstra
+    g = graph(grid)
+    src = int(grid.idx[sy - grid.y0, sx - grid.x0])
+    if src < 0:
+        return {}
+    dist, pred = sp_dijkstra(g, directed=True, indices=src, limit=limit, return_predecessors=True)
     out = {}
-    for t, (c, cell) in found.items():
-        path = [cell]
-        while path[-1] != start:
-            path.append(came[path[-1]])
+    for t, (tx, ty) in targets.items():
+        if not grid.inside(tx, ty):
+            continue
+        v = int(grid.idx[ty - grid.y0, tx - grid.x0])
+        if v < 0 or not np.isfinite(dist[v]):
+            continue
+        path = [v]
+        while path[-1] != src:
+            path.append(int(pred[path[-1]]))
         path.reverse()
-        out[t] = (c, [(p % w + x0, p // w + y0) for p in path])
+        out[t] = (int(round(dist[v])), [(int(grid.cell_x[p]), int(grid.cell_y[p])) for p in path])
     return out
 
 
