@@ -397,6 +397,39 @@ namespace
     }
 }
 
+float RouteNet::tilesLeft(int layer, int heroX, int heroY, int toX, int toY)
+{
+    const std::lock_guard lock(g_lock);
+    const Kept& k = g_kept;
+    if (!k.ok || k.layer != layer || cheb(k.toX, k.toY, toX, toY) > 4 || k.points.size() < 2 || k.progress >= k.points.size())
+    {
+        return -1.0f;
+    }
+    size_t nearest = k.progress;
+    int nearestD = INT32_MAX;
+    const size_t windowEnd = std::min(k.points.size(), k.progress + 24);
+    for (size_t i = k.progress; i < windowEnd; ++i)
+    {
+        const int d = cheb(k.points[i].first, k.points[i].second, heroX, heroY);
+        if (d < nearestD)
+        {
+            nearestD = d;
+            nearest = i;
+        }
+    }
+    if (nearestD > 40)
+    {
+        return -1.0f;
+    }
+    double left = 0.0;
+    for (size_t i = nearest + 1; i < k.points.size(); ++i)
+    {
+        left += std::hypot(static_cast<double>(k.points[i].first - k.points[i - 1].first),
+                           static_cast<double>(k.points[i].second - k.points[i - 1].second));
+    }
+    return static_cast<float>(left);
+}
+
 RouteNet::Trip RouteNet::trip(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out)
 {
     const std::lock_guard lock(g_lock);

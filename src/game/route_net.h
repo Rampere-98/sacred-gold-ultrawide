@@ -21,4 +21,9 @@ namespace RouteNet
     // choosing between walking and a portal: -1 while it is worked out (on the same low thread; ask again), -2 with no
     // net or no way by it. Kept five minutes for ends within 4 tiles (the goal) and 12 (the start).
     float walkTiles(int fromX, int fromY, int toX, int toY);
+    // The tiles still to walk of the trip being walked to (toX, toY) on `layer`, from the point of the trip nearest the
+    // hero at (heroX, heroY) (within the 24 points ahead of the one last asked for; the trip is the net's, not the
+    // hero's every step): -1 when the net has no trip for that goal or the hero is over 40 tiles off it. The auto attack's measure of progress along
+    // a detour that is, in a straight line, first away from the goal (a river's bend: 1276 tiles for 385 as the crow flies).
+    float tilesLeft(int layer, int heroX, int heroY, int toX, int toY);
 }

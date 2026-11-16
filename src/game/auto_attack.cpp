@@ -4662,6 +4662,7 @@ namespace
         int fails = 0;
         int32_t movedX = 0, movedY = 0;     // where the hero last was 3 tiles on along a route
         DWORD aroundSince = 0;              // since when moving along a route with no nearer for it (0: not)
+        float bestLeft = -1.0f;             // the fewest tiles left of the route net's trip so far (-1: none)
     };
     Travel g_travel;
 
@@ -5286,6 +5287,28 @@ namespace
         else if (goingAround(t.movedX, t.movedY, t.aroundSince, self, now))
         {
             t.bestAt = now;
+        }
+        // On the route net's trip, progress is the walk left, not the straight line (the stuck solver, 2026-11-16, A6 at
+        // 3141,2655 by the river: the trip 1276-1324 tiles for 385-478 as the crow flies, the hero first away from the goal;
+        // three «no nearer in 20 s» and «no way found … left 3 min» for the portal and for the quest at 3242,2864; and
+        // goingAround gives a detour 2 min at most). A new trip worked out again, longer, starts the count again.
+        const float left = RouteNet::tilesLeft(*(reinterpret_cast<const uint8_t*>(self) + 0x24), static_cast<int>(self->x / kTileSize),
+                                               static_cast<int>(self->y / kTileSize), static_cast<int>(x / kTileSize),
+                                               static_cast<int>(y / kTileSize));
+        if (left < 0.0f)
+        {
+            t.bestLeft = -1.0f;
+        }
+        else if (t.bestLeft < 0.0f || left > t.bestLeft + 40.0f)
+        {
+            t.bestLeft = left;
+        }
+        else if (left < t.bestLeft - 2.0f)
+        {
+            t.bestLeft = left;
+            t.bestAt = now;
+            t.fails = 0;
+            t.aroundSince = 0;
         }
         if (t.detourUntil && static_cast<int>(now - t.detourUntil) < 0)
         {
