@@ -363,6 +363,23 @@ namespace
         return reinterpret_cast<TwoHanded>(0x5CECD0)(o, nullptr) != 0;
     }
 
+    // The hand the game holds a weapon in (Manolito, block AW-1: 0x5CEC00's classes, from the subclass as it reads them):
+    // 1 hand 0 only (the shield's: bows, crossbows and subclass 3, the big axes), 2 both, 3 one hand (hand 1, the
+    // weapon's; hand 0 only for a second weapon with the skill for two). 0: no weapon or not known.
+    int handClass(uint32_t id)
+    {
+        if (!id || !worth(id).weapon)
+        {
+            return 0;
+        }
+        const uint8_t kind = HeroProfile::itemWeaponKind(id);
+        if (kind == 3 || kind == 7 || kind == 12)   // as bowHand: 0x5CEC00's class 1
+        {
+            return 1;
+        }
+        return twoHanded(id) ? 2 : 3;
+    }
+
     // The game's own «may this go into this hand of this weapon slot» (Manolito, block AW: canDrop 0x6E09C0
     // thiscall(taskbar, u16 slot, u8 hand, id, u32* displaced, flag 0), ret 0x14: 0 no, 1 free, 2 it would displace
     // what is there, 4 it goes to the other hand; hand 0 the shield's, 1 the weapon's). -1: no taskbar to ask.
@@ -417,6 +434,12 @@ namespace
             }
             // The hands (12 the shield's, 13 the weapon's): never a two-handed weapon beside what the other hand
             // holds, nor a shield beside a two-handed weapon. A player would have to empty the other hand first.
+            // And a weapon only in the hand the game holds it in (the player, 2026-11-16: A2 «está sujetando mal el
+            // hacha»: a subclass-3 axe, a hand-0 weapon, had gone to 13): hand class 1 only 12, 3 only 13.
+            if ((slot == 12 && handClass(id) == 3) || (slot == 13 && handClass(id) == 1))
+            {
+                continue;
+            }
             if (slot == 12 || slot == 13)
             {
                 const uint32_t other = fn<GetEquipped>(g_getEquipped)(hero, nullptr, slot == 12 ? 13 : 12);
@@ -1629,6 +1652,104 @@ namespace
         return !slotItem(pack, slot, 0) && !slotItem(pack, slot, 1);
     }
 
+    std::atomic<uint32_t> g_switchTo{0xFFFFFFFFu};
+
+    void switchSlot(void*)
+    {
+        const uint32_t slot = g_switchTo.exchange(0xFFFFFFFFu);
+        cUI_Manager* ui = cUI_Manager::instance();
+        void* taskbar = ui ? static_cast<void*>(ui->taskbar()) : nullptr;
+        if (slot < 5 && taskbar && g_selectSlot)
+        {
+            const GrannyAsync::ModelLock lock;   // the old weapon's model queued, the new one loaded (block AK)
+            fn<SelectSlot>(g_selectSlot)(taskbar, nullptr, slot, 1);
+        }
+    }
+
+    // A weapon in a hand the game does not hold it in, or a two-handed one beside something (the player, 2026-11-16:
+    // A2's axe in slot 4's hand 1): put back as the game would have it, in a slot not in use; the slot in use first
+    // left for another (the game copies the equipment's hands into it every frame). One a pass. True if acted.
+    bool mendHands(cCreature* hero, uint8_t* pack)
+    {
+        const int open = slotsOpen(hero);
+        const int active = *reinterpret_cast<const uint16_t*>(pack + kActiveSlot);
+        for (int slot = 0; slot < open; ++slot)
+        {
+            const uint32_t h0 = slotItem(pack, slot, 0), h1 = slotItem(pack, slot, 1);
+            const bool wrongHand = h1 && !h0 && handClass(h1) == 1;
+            const uint32_t twoWith = h0 && h1 && h0 != h1 ? (twoHanded(h0) ? h1 : twoHanded(h1) ? h0 : 0) : 0;
+            if (!wrongHand && !twoWith)
+            {
+                continue;
+            }
+            if (slot == active)
+            {
+                // Another slot with a weapon taken first (as the keys 1-5), this one mended at a later pass.
+                for (int other = 0; other < open; ++other)
+                {
+                    if (other != slot && slotWeapon(pack, other) && GetTickCount() - g_slotSwitchAt > 20000 &&
+                        !Tactics::busy(GetTickCount()) &&
+                        Act::allowed(Act::Kind::WeaponSlots, "leave a weapon slot whose weapon is in the wrong hand, to mend it"))
+                    {
+                        LOG("Gear: weapon slot {} holds {:x} in the wrong hand: slot {} taken to mend it", slot + 1,
+                            wrongHand ? h1 : twoWith, other + 1);
+                        g_slotSwitchAt = GetTickCount();
+                        g_switchTo = static_cast<uint32_t>(other);
+                        Inject::engineCall(&switchSlot, nullptr);
+                        return true;
+                    }
+                }
+                continue;
+            }
+            if (!Act::allowed(Act::Kind::WeaponSlots, "put a weapon back in the hand the game holds it in"))
+            {
+                return false;
+            }
+            if (wrongHand)
+            {
+                fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(slot), 1, 0, 1);
+                fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(slot), 0, h1, 1);
+                const bool done = slotItem(pack, slot, 0) == h1 && !slotItem(pack, slot, 1);
+                if (!done && !slotItem(pack, slot, 0) && !slotItem(pack, slot, 1))
+                {
+                    fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(slot), 1, h1, 1);  // as it was
+                }
+                LOG("Gear: weapon slot {}: {:x} (subclass {}, the game holds it in hand 0) moved from hand 1 to hand 0: {}",
+                    slot + 1, h1, HeroProfile::itemWeaponKind(h1), done ? "done" : "refused, left as it was");
+                if (!done)
+                {
+                    g_slotsReady = false;
+                }
+                return true;
+            }
+            // Two-handed beside something: the other thing back to the backpack (only with room for it).
+            int w = 0, h = 0;
+            uint16_t cell = 0;
+            const uint32_t hand = twoWith == h0 ? 0u : 1u;
+            if (!sizeOf(twoWith, w, h) || !fn<FindFree>(g_findFree)(pack, nullptr, w, h, &cell, 0))
+            {
+                LOG("Gear: weapon slot {}: {:x} beside a two-handed weapon, no room in the backpack for it", slot + 1, twoWith);
+                continue;
+            }
+            fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(slot), hand, 0, 1);
+            if (slotItem(pack, slot, hand))
+            {
+                g_slotsReady = false;
+                return false;
+            }
+            fn<PutItem>(g_putItem)(pack, nullptr, cell, twoWith, w, h, 1);
+            if (!inBackpack(pack, twoWith))
+            {
+                fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(slot), hand, twoWith, 1);
+                g_slotsReady = false;
+            }
+            g_noPutOn[twoWith] = GetTickCount();
+            LOG("Gear: weapon slot {}: {:x} was beside a two-handed weapon: back to the backpack", slot + 1, twoWith);
+            return true;
+        }
+        return false;
+    }
+
     bool fillWeaponSlot(cCreature* hero, uint8_t* pack)
     {
         if (!g_slotsReady)
@@ -1761,13 +1882,13 @@ namespace
             LOG("Gear: weapon slot {} {}: its weapons back to the backpack for {:x} ({}, {})", empty + 1, repeats,
                 best, styleName(styleOf(best)), kindName(mainKind(best)));
         }
-        // The hand the game's test gives (4: the other one, a bow's; A7, 2026-11-14), and only a free one. A weapon
-        // refused is left for 10 minutes, the slots not given up for it.
-        uint32_t hand = 1;
+        // The hand the game holds it in (hand class 1: hand 0), then the game's test on it (4: the other one, a bow's;
+        // A7, 2026-11-14), and only a free one. A weapon refused is left for 10 minutes, the slots not given up for it.
+        uint32_t hand = handClass(best) == 1 ? 0u : 1u;
         int may = canDrop(static_cast<uint32_t>(empty), hand, best);
-        if (may == 4)
+        if (may == 4 && handClass(best) != 1 && handClass(best) != 3)
         {
-            hand = 0;
+            hand ^= 1u;
             may = canDrop(static_cast<uint32_t>(empty), hand, best);
         }
         if (may != 1)
@@ -1797,20 +1918,6 @@ namespace
             kindName(mainKind(best)), bestScore, takenText(takenStyles, takenElements));
         g_agentPut.insert(best);
         return true;
-    }
-
-    std::atomic<uint32_t> g_switchTo{0xFFFFFFFFu};
-
-    void switchSlot(void*)
-    {
-        const uint32_t slot = g_switchTo.exchange(0xFFFFFFFFu);
-        cUI_Manager* ui = cUI_Manager::instance();
-        void* taskbar = ui ? static_cast<void*>(ui->taskbar()) : nullptr;
-        if (slot < 5 && taskbar && g_selectSlot)
-        {
-            const GrannyAsync::ModelLock lock;   // the old weapon's model queued, the new one loaded (block AK)
-            fn<SelectSlot>(g_selectSlot)(taskbar, nullptr, slot, 1);
-        }
     }
 
     // Runes of other classes in the backpack (the player, 2026-11-10: «las runas son importantes para
@@ -3424,7 +3531,7 @@ void Gear::onFrame(DWORD now, bool calm)
         cObjectManager* objects = cObjectManager::instance();
         cCreature* hero = objects ? objects->hero() : nullptr;
         uint8_t* pack = hero && hero->health > 0 ? entryOf(static_cast<int>(hero->id)) : nullptr;
-        if (pack && !equipHorseArmour(hero, pack) && !fillRangedSlot(hero, pack))
+        if (pack && !equipHorseArmour(hero, pack) && !mendHands(hero, pack) && !fillRangedSlot(hero, pack))
         {
             fillWeaponSlot(hero, pack);
         }
