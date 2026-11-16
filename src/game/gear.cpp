@@ -3216,6 +3216,11 @@ bool Gear::closeStrayHorseWindow(bool now)
     {
         return false;
     }
+    // Through the gate like any other window the agent closes (the code reviewer, E2: Suggest must propose).
+    if (!Act::allowed(Act::Kind::Windows, "close the stable's window left open"))
+    {
+        return false;
+    }
     using ClearFlags = void(__fastcall*)(uint8_t* window, void*, uint32_t bits);
     fn<ClearFlags>(0x7325C0)(w, nullptr, 1);
     s_since = 0;

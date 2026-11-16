@@ -7584,28 +7584,63 @@ namespace
     // The portal box opens when the hero steps on a portal (on the way to loot, an enemy, a quest) and holds the
     // whole game in its modal loop: no frames, so onFrame cannot see it. A thread of its own closes it (Escape, the
     // box's Cancel) once it has stood 1.5 s with the agent on; the player's own portal trips are theirs.
+    // Read from the watcher's own thread, so guarded (the code reviewer, E4): the UI manager or its window being
+    // replaced meanwhile reads as «not open».
+    bool escapeMenuVisible()
+    {
+        __try
+        {
+            cUI_Manager* ui = cUI_Manager::instance();
+            cUI_Window2* menu = ui && (ui->flags & cUI_Manager::inGame) && !(ui->flags & cUI_Manager::inMenus)
+                                    ? ui->window(cUI_Manager::Window::escapeMenu)
+                                    : nullptr;
+            return menu && menu->visible();
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
     // The game menu (Escape) open under the agent (A7, 2026-11-15: «el agente entra en el menú de pausa, impidiendo
-    // continuar el entrenamiento»): closed with Escape once it has stood 3 s with no click of the player's for 20 s
-    // (the player's own pause, clicking in it, is theirs).
+    // continuar el entrenamiento»): closed with Escape once it has stood 3 s. The player's own is never closed (the
+    // code reviewer, E1: clicks alone do not tell it): a menu that came up within 2.5 s of a physical Escape, or
+    // that sees a physical key or click of the player's while open, is theirs until it shuts.
     void watchEscapeMenu(DWORD now, bool on, DWORD& since, DWORD& toldAt)
     {
-        cUI_Manager* ui = cUI_Manager::instance();
-        cUI_Window2* menu = ui && (ui->flags & cUI_Manager::inGame) && !(ui->flags & cUI_Manager::inMenus)
-                                ? ui->window(cUI_Manager::Window::escapeMenu)
-                                : nullptr;
-        const DWORD quiet = *static_cast<volatile DWORD*>(&g_quietUntil);
-        const bool playerNear = quiet && static_cast<int>(now - quiet) < 20000;
-        if (!on || !menu || !menu->visible() || playerNear)
+        static DWORD s_physicalEscAt = 0;
+        static bool s_players = false;
+        // The keys and buttons read are the whole system's: they count only with this game in front (a copy playing
+        // without the focus would otherwise take the player's clicks in another program for theirs).
+        DWORD frontPid = 0;
+        GetWindowThreadProcessId(GetForegroundWindow(), &frontPid);
+        const bool front = frontPid == GetCurrentProcessId();
+        if (front && physicallyDown(VK_ESCAPE))
+        {
+            s_physicalEscAt = now;
+        }
+        const bool open = on && escapeMenuVisible();
+        if (!open)
         {
             since = 0;
+            s_players = false;
             return;
         }
         if (!since)
         {
             since = now;
+            s_players = s_physicalEscAt && now - s_physicalEscAt < 2500;
         }
-        else if (now - since > 3000 && now - toldAt > 3000 &&
-                 Act::allowed(Act::Kind::Windows, "close the game menu opened under the agent"))
+        if (front && (playerClicks() || physicallyDown(VK_ESCAPE) || physicallyDown(VK_RETURN)))
+        {
+            s_players = true;
+        }
+        if (s_players)
+        {
+            return;
+        }
+        if (now - since > 3000 && now - toldAt > 3000 &&
+            Act::allowed(Act::Kind::Windows, "close the game menu opened under the agent"))
         {
             toldAt = now;
             LOG("AutoAttack: the game menu is open under the agent: closed (Escape)");
@@ -8338,7 +8373,8 @@ void AutoAttack::onFrame()
             }
             // Escape three times at most (it could bring up the game menu instead, which its own watcher closes with
             // Escape too: the two must not take turns for good); then the dialog is left and answered every 30 s.
-            if (s_strayAnswers > 6 && s_strayAnswers <= 9)
+            if (s_strayAnswers > 6 && s_strayAnswers <= 9 &&
+                Act::allowed(Act::Kind::Windows, "leave a dialog the Enter does not close (Escape)"))
             {
                 LOG("AutoAttack: an NPC dialog that the Enter does not close ({} answers): Escape", s_strayAnswers);
                 Inject::key(VK_ESCAPE, true);
@@ -8356,8 +8392,9 @@ void AutoAttack::onFrame()
         return;
     }
     s_strayOpenAt = 0;
-    // The stable's window left open with no horse wanted and no dialog over it: closed after 4 s.
-    if (g_on && Act::may(Act::Kind::Windows))
+    // The stable's window left open with no horse wanted and no dialog over it: closed after 4 s, never while the
+    // player is at it (no click of theirs for 20 s; the code reviewer, E2: one the player opens is theirs).
+    if (g_on && Act::may(Act::Kind::Windows) && !(g_quietUntil && static_cast<int>(now - g_quietUntil) < 20000))
     {
         Gear::closeStrayHorseWindow();
     }
