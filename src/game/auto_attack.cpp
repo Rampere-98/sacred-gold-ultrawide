@@ -4494,6 +4494,70 @@ namespace
     bool g_shopTold = false;
     std::unordered_map<uint32_t, DWORD> g_shopFailedAt;     // merchants that would not open: left 5 min
     std::unordered_map<uint32_t, DWORD> g_shopUselessAt;    // merchants that took nothing of the backpack: left 30 min
+    // The trip to a merchant must get nearer: not 15 tiles nearer in 150 s and the merchant is left 30 min (the stuck
+    // solver, 2026-11-16, A6 on a landmass its map shows shut in by water: the choice flipped between merchants 114 and
+    // 114 tiles off, or 2883,2889 and 2771,2608 at 245 and 245, every 5-15 s, each flip a new goal for `travel`, whose
+    // 20 s «no nearer» clock then never ran: 40 min of «off to the merchant»).
+    struct ShopWatch
+    {
+        uint64_t key = 0;
+        DWORD since = 0;
+        double startWay = 0.0;
+    };
+    bool shopNoProgress(ShopWatch& w, uint64_t key, double way, DWORD now)
+    {
+        if (w.key != key)
+        {
+            w.key = key;
+            w.since = now;
+            w.startWay = way;
+            return false;
+        }
+        if (way < w.startWay - 15.0 * kTileSize)
+        {
+            w.since = now;
+            w.startWay = way;
+            return false;
+        }
+        return now - w.since > 150000;
+    }
+    // No merchant to be reached: the nearest way in or out the map knows (a portal, a door, a cave) within 400 tiles, each
+    // tried once in 20 min, walked to for 3 min.
+    DWORD g_exitUntil = 0;
+    int32_t g_exitX = 0, g_exitY = 0;
+    std::unordered_map<uint64_t, DWORD> g_exitTriedAt;
+    void armExit(DWORD now, const cCreature* self, int layer)
+    {
+        const int tx = static_cast<int>(self->x / kTileSize), ty = static_cast<int>(self->y / kTileSize);
+        double best = 1e18;
+        int bx = 0, by = 0;
+        bool found = false;
+        for (const auto& [x, y] : MapMemory::waysOut(layer, tx, ty, 400))
+        {
+            const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(x)) << 32) | static_cast<uint32_t>(y);
+            if (const auto t = g_exitTriedAt.find(key); t != g_exitTriedAt.end() && now - t->second < 1200000)
+            {
+                continue;
+            }
+            const double d = std::hypot(static_cast<double>(x - tx), static_cast<double>(y - ty));
+            if (d < best)
+            {
+                best = d;
+                bx = x;
+                by = y;
+                found = true;
+            }
+        }
+        if (!found)
+        {
+            return;
+        }
+        g_exitTriedAt[(static_cast<uint64_t>(static_cast<uint32_t>(bx)) << 32) | static_cast<uint32_t>(by)] = now;
+        g_exitX = static_cast<int32_t>((bx + 0.5) * kTileSize);
+        g_exitY = static_cast<int32_t>((by + 0.5) * kTileSize);
+        g_exitUntil = now + 180000;
+        LOG("AutoAttack: no merchant gets nearer in 150 s: out by the way in or out at {},{} ({:.0f} tiles)", bx, by, best);
+    }
     int32_t g_questX = 0, g_questY = 0;
 
     // Speaking to the quest's creature (the quest giver, or whom to report to): a click on it, as the player's, then
@@ -5394,9 +5458,11 @@ namespace
                 };
                 leave(g_questX, g_questY);
                 leave(g_travel.x, g_travel.y);
-                LOG("AutoAttack: stuck guard: stuck again where it was {} s ago: the goal at tile {},{} left 10 min",
+                LOG("AutoAttack: stuck guard: stuck again where it was {} s ago: the goal at tile {},{} left 10 min (the "
+                    "travel's goal {},{})",
                     (now - s_forgotAt) / 1000, static_cast<int>(g_questX / kTileSize),
-                    static_cast<int>(g_questY / kTileSize));
+                    static_cast<int>(g_questY / kTileSize), static_cast<int>(g_travel.x / kTileSize),
+                    static_cast<int>(g_travel.y / kTileSize));
                 Findings::note("stuck", self->x, self->y, "stuck again: the goal at tile {},{} left 10 min",
                                static_cast<int>(g_questX / kTileSize), static_cast<int>(g_questY / kTileSize));
                 g_questX = g_questY = 0;
@@ -5565,8 +5631,25 @@ namespace
         // him as the player's; Gear sells and puts on the upgrades, then the agent closes it (onFrame).
         if (Gear::wantsShop() && !Gear::shopOpen())
         {
+            if (g_exitUntil)
+            {
+                if (static_cast<int>(now - g_exitUntil) < 0 &&
+                    std::hypot(static_cast<double>(g_exitX - self->x), static_cast<double>(g_exitY - self->y)) > 3.0 * kTileSize)
+                {
+                    g_questTravel = true;
+                    setIntent(Intent::Shop, "no merchant can be reached: out by the nearest way in or out");
+                    if (!travel(now, self, g_exitX, g_exitY, g_shopAskAt))
+                    {
+                        g_exitUntil = 0;
+                    }
+                    MapMemory::setRoute(true, g_exitX, g_exitY);
+                    g_roamAt = 0;
+                    return;
+                }
+                g_exitUntil = 0;
+            }
             const Merchant* best = nullptr;
-            double bestDistance = 0.0;
+            double bestDistance = 0.0, bestRank = 0.0;
             for (const Merchant& m : g_merchants)
             {
                 const auto failed = g_shopFailedAt.find(m.id);
@@ -5593,10 +5676,12 @@ namespace
                 {
                     continue;
                 }
-                if (!best || d < bestDistance)
+                const double rank = m.id == g_shopId ? d * 0.75 : d;
+                if (!best || rank < bestRank)
                 {
                     best = &m;
                     bestDistance = d;
+                    bestRank = rank;
                 }
             }
             if (best)
@@ -5615,6 +5700,18 @@ namespace
                 const bool closeBy = bestDistance <= 15.0 * kTileSize || best->layer != layer;
                 if (!closeBy)
                 {
+                    static ShopWatch s_listWatch;
+                    if (shopNoProgress(s_listWatch, best->id, bestDistance, now))
+                    {
+                        LOG("AutoAttack: merchant {:x} no nearer in 150 s ({:.0f} tiles): left 30 min", best->id,
+                            bestDistance / kTileSize);
+                        g_shopUselessAt[best->id] = now;
+                        g_shopId = 0;
+                        s_listWatch = ShopWatch{};
+                        armExit(now, self, layer);
+                        g_roamAt = 0;
+                        return;
+                    }
                     if (!travel(now, self, best->x, best->y, g_shopAskAt))
                     {
                         g_shopFailedAt[best->id] = now;
@@ -5650,7 +5747,7 @@ namespace
                 static std::unordered_map<uint64_t, DWORD> s_remFailedAt;
                 static uint64_t s_remKey = 0;
                 const int remTx = static_cast<int>(self->x / kTileSize), remTy = static_cast<int>(self->y / kTileSize);
-                double remWay = 0.0;
+                double remWay = 0.0, remRank = 0.0;
                 int remX = 0, remY = 0;
                 bool remFound = false;
                 for (const auto& [mx, my] : MapMemory::merchantsNear(layer, remTx, remTy, 700))
@@ -5662,10 +5759,12 @@ namespace
                     }
                     const double way = wayLength(self->x, self->y, static_cast<int32_t>((mx + 0.5) * kTileSize),
                                                  static_cast<int32_t>((my + 0.5) * kTileSize));
-                    if (way <= 900.0 * kTileSize && (!remFound || way < remWay))
+                    const double rank = key == s_remKey ? way * 0.75 : way;
+                    if (way <= 900.0 * kTileSize && (!remFound || rank < remRank))
                     {
                         remFound = true;
                         remWay = way;
+                        remRank = rank;
                         remX = mx;
                         remY = my;
                     }
@@ -5687,6 +5786,18 @@ namespace
                             s_remKey = key;
                             LOG("AutoAttack: no merchant in the game's list and {} healing potions: off to the one the map "
                                 "remembers at {},{} ({:.0f} tiles)", Gear::healingLeft(), remX, remY, remWay / kTileSize);
+                        }
+                        static ShopWatch s_remWatch;
+                        if (shopNoProgress(s_remWatch, key, remWay, now))
+                        {
+                            LOG("AutoAttack: the remembered merchant {},{} no nearer in 150 s ({:.0f} tiles): left 30 min", remX,
+                                remY, remWay / kTileSize);
+                            s_remFailedAt[key] = now;
+                            s_remKey = 0;
+                            s_remWatch = ShopWatch{};
+                            armExit(now, self, layer);
+                            g_roamAt = 0;
+                            return;
                         }
                         g_questTravel = true;
                         setIntent(Intent::Shop, "no healing potion: to the merchant the map remembers");
