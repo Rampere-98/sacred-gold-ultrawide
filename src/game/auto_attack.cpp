@@ -276,6 +276,20 @@ namespace
         return loot;
     }
 
+    // A quest's thing to fetch, not someone to speak to: the journal's +0x14 can name an item (the quests' session,
+    // 2026-11-16: the Pay Book DQ_15004, «who» the book in Azrott's house; on 13-11 A1 went in, collected it and took
+    // it to Azrott; since the 14-11 swap of a «no creature» for the nearest villager no copy has done it). An item
+    // lying in the world with the quest item flag (0x800, Gear's kQuestItem).
+    bool questThing(const cObject* object)
+    {
+        if (!object || const_cast<cObject*>(object)->asCreature())
+        {
+            return false;
+        }
+        const uint32_t flags = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(object) + kObjectFlags);
+        return (flags & 0x800) != 0;
+    }
+
     // Equipment by its class (RTTI): weapons, armour, rings, amulets. Only these get the grade filter: gold, potions,
     // scrolls, runes and upgrades are always taken (the player, 2026-11-09: «se salta hasta el oro»).
     bool isEquipment(const cObject* object)
@@ -3560,6 +3574,7 @@ namespace
     }
     std::vector<QuestGoal> g_questBook;     // rebuilt by questTarget, nearest first
     int g_questsDone = 0, g_questsFailed = 0;
+    std::vector<int32_t> g_doneNumbers;     // the journal's quests done (record +0x08), at its last read
     DWORD g_questsDoneAt = 0;           // when the count of quests done last changed
     DWORD g_questPauseUntil = 0;        // quests left a while for farming (a long spell of neither fights nor quests)
     // The yellow "?!" / "!" signs of the last pass (creatures the hero can speak to now), on the hero's layer.
@@ -3595,11 +3610,16 @@ namespace
         {
             int done = 0, failed = 0;
             std::vector<int32_t> failedNumbers;
+            g_doneNumbers.clear();
             for (const uint8_t* r = begin; r < end; r += kRecord)
             {
                 const int32_t kind = *reinterpret_cast<const int32_t*>(r), state = *reinterpret_cast<const int32_t*>(r + 4);
                 done += state == 100;
                 failed += state == 101;
+                if (state == 100)
+                {
+                    g_doneNumbers.push_back(*reinterpret_cast<const int32_t*>(r + 0x08));
+                }
                 if (state == 101)
                 {
                     failedNumbers.push_back(*reinterpret_cast<const int32_t*>(r + 0x08));
@@ -3628,6 +3648,22 @@ namespace
                 g.minutesLeft = deadlineLeft(g.number);
                 g.tier = g.minutesLeft > 0 ? 2 : questPriority(g.number);
                 g_questBook.push_back(g);
+            }
+            // A quest left for last because it breaks another (docs/QUESTS.md, «Reglas para el agente»: Boris
+            // Richfield R06NQ02 breaks Magical Thistle R12NQ02; Collect Orc Rings DQ_10259 spoils Stolen Iron Bars
+            // DQ_15015) is an ordinary one once that other is done (the quests' session, 2026-11-16: 402 open in 7
+            // copies, picked by none in a day, though 702 was done in 6 of them).
+            static constexpr std::pair<int32_t, int32_t> kAfter[] = {{rq(6, 2), rq(12, 2)}, {10259, 15015}};
+            for (QuestGoal& g : g_questBook)
+            {
+                for (const auto& [quest, first] : kAfter)
+                {
+                    if (g.number == quest && g.tier < 0 &&
+                        std::find(g_doneNumbers.begin(), g_doneNumbers.end(), first) != g_doneNumbers.end())
+                    {
+                        g.tier = 0;
+                    }
+                }
             }
             // A step done or failed (the journal moved on): who was spoken to lately may have the next one at once.
             // Seen live (2026-11-09): the arena won, Julius' next quest waited out the 2 min of «spoken to lately»
@@ -6807,10 +6843,14 @@ namespace
             // R01NQ02: the journal gives a spot in the tavern, «the contact will reveal himself»: a creature with «!»
             // two steps off; A1 stood on the spot, looked around and walked out, 2026-11-13). Within 10 tiles of the
             // goal and of the hero, not spoken to lately.
-            if (who == 0xFFFFFFFFu &&
-                std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) < 10.0 * kTileSize)
+            // From 25 tiles too for a sign on the goal itself (within 3 tiles of it): a goal that cannot be stood on is
+            // «taken as there» from up to 22 tiles (the quests' session, 2026-11-16: The Merchant's Message DQ_10258,
+            // A8 01:56:34 «3382,3300 cannot be stood on … (22 tiles): taken as there», the «!» creature 6fd on that
+            // very tile, never spoken to by any copy).
+            const double toSpot = std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y));
+            if (who == 0xFFFFFFFFu && toSpot < 25.0 * kTileSize)
             {
-                double nearest = 10.0 * kTileSize;
+                double nearest = toSpot < 10.0 * kTileSize ? 10.0 * kTileSize : 3.0 * kTileSize;
                 for (const Sign& sign : g_signs)
                 {
                     const double toGoal = std::hypot(static_cast<double>(sign.x - qx), static_cast<double>(sign.y - qy));
@@ -6831,7 +6871,10 @@ namespace
                     }
                 }
             }
-            const bool speakTo = who && who != 0xFFFFFFFFu;
+            // A quest item named as the goal's «creature» is fetched, not spoken to: the walk keeps the way in by the
+            // door (doorInto) and the collect takes it on the spot.
+            const bool fetch = who && who != 0xFFFFFFFFu && objects && questThing(objects->object(who));
+            const bool speakTo = who && who != 0xFFFFFFFFu && !fetch;
             const cObject* speaker = speakTo && objects ? objects->object(who) : nullptr;
             // Loaded within 60 tiles the creature is the goal and stays so until 90 (the stuck solver, 2026-11-16: A8
             // at 60 tiles on one axis, the goal flipped between the creature's tile 2916,3290 and the journal's
@@ -6859,7 +6902,12 @@ namespace
             // reachable is the way in itself, and the hero walked back onto it and out (the player, 2026-11-13: «llegan
             // a entrar pero salen al momento»; A7 in and out 69 times in half an hour, 2 s inside each).
             const int32_t askedX = qx, askedY = qy;     // the goal as the journal gives it, before the reachable tile
-            if (!speakTo && !Whereabouts::area().shutIn && layer == 0)
+            // Only a goal within the box the reachable test covers (64 tiles about the hero): for one beyond it the
+            // nearest reachable tile is a spot on the box's edge that leads nowhere, and the goal crept along with the
+            // hero (the quests' session, 2026-11-16: A8's 10258 at 529 tiles became «off to the quest at tile
+            // 2877,3230 (25 tiles)»; A2's 1103 at 454 tiles became 1797,2339 at 67; «no way» to those, the quest left).
+            if (!speakTo && !Whereabouts::area().shutIn && layer == 0 &&
+                Whereabouts::reachable(static_cast<int>(qx / kTileSize), static_cast<int>(qy / kTileSize)) != -1)
             {
                 int nx = 0, ny = 0;
                 if (Whereabouts::nearestReachable(static_cast<int>(qx / kTileSize), static_cast<int>(qy / kTileSize), nx, ny))
@@ -6975,7 +7023,27 @@ namespace
                 {
                     const int gtx = static_cast<int>(qx / kTileSize), gty = static_cast<int>(qy / kTileSize);
                     int nx = 0, ny = 0;
-                    if (Whereabouts::reachable(gtx, gty) != 1 && Whereabouts::nearestReachable(gtx, gty, nx, ny))
+                    // The goal inside the very pocket the hero is shut in (within 4 tiles of its reachable ground):
+                    // not outside, nothing to get out for (the quests' session, 2026-11-16: the Tree of Life's inside,
+                    // R08NQ01, is a pocket of the surface at 5064..5096 x 344..370; A3 got in at 19:06:01 with the
+                    // goal 5087,358 inside it and was led out by the way it came 18 s later, «the quest outside»).
+                    const bool goalInPocket = Whereabouts::reachable(gtx, gty) != 1 &&
+                                              Whereabouts::nearestReachable(gtx, gty, nx, ny) &&
+                                              std::max(std::abs(nx - gtx), std::abs(ny - gty)) <= 4;
+                    if (goalInPocket)
+                    {
+                        static uint64_t s_toldPocket = 0;
+                        const uint64_t pk = (static_cast<uint64_t>(static_cast<uint32_t>(gtx)) << 32) | static_cast<uint32_t>(gty);
+                        if (pk != s_toldPocket)
+                        {
+                            s_toldPocket = pk;
+                            LOG("AutoAttack: shut in with the goal {},{} inside the same pocket (its nearest reachable tile "
+                                "{},{}): staying in",
+                                gtx, gty, nx, ny);
+                        }
+                    }
+                    if (!goalInPocket && Whereabouts::reachable(gtx, gty) != 1 &&
+                        Whereabouts::nearestReachable(gtx, gty, nx, ny))
                     {
                         waitShut = true;
                         // A way out found before (a portal end, a door or stairs: MapMemory saw the hero jump there)
@@ -7187,7 +7255,8 @@ namespace
             {
                 const int gtx = static_cast<int>(qx / kTileSize), gty = static_cast<int>(qy / kTileSize);
                 int nx = 0, ny = 0;
-                if (Whereabouts::nearestReachable(gtx, gty, nx, ny))
+                // Within the reachable test's box only (as the fixed goal above: beyond it the box's edge is no goal).
+                if (Whereabouts::reachable(gtx, gty) != -1 && Whereabouts::nearestReachable(gtx, gty, nx, ny))
                 {
                     const int32_t wx = static_cast<int32_t>((nx + 0.5) * kTileSize);
                     const int32_t wy = static_cast<int32_t>((ny + 0.5) * kTileSize);
@@ -7271,6 +7340,19 @@ namespace
             }
             // There: the quest's creature, if one, is spoken to.
             cObject* npc = who && who != 0xFFFFFFFFu ? objects->object(who) : nullptr;
+            // The quest's thing to fetch (questThing): nobody to speak to; the collect takes it (Loot::Item: the quest
+            // item flag lets it through the fixture test).
+            if (npc && questThing(npc))
+            {
+                static uint32_t s_toldFetch = 0;
+                if (s_toldFetch != who)
+                {
+                    s_toldFetch = who;
+                    LOG("AutoAttack: the quest's {:x} is a quest item to fetch, not a creature: collected on the spot", who);
+                }
+                who = 0;
+                npc = nullptr;
+            }
             // The journal's id may now be another thing (the stuck solver, 2026-11-14: A1's quest named 772, by then a
             // piece of loot: «talkable false», never spoken to, in and out of the house until the goal was left): the
             // one to speak to is then the nearest creature that can be spoken to within 10 tiles of the goal.
@@ -7680,7 +7762,9 @@ namespace
             // kind is often not told, «sin saber»).
             static constexpr int32_t kKillQuests[] = {
                 151,   251,   253,   301,   303,   351,   352,   402,   453,   503,   552,   553,   601,   653,
-                701,   703,   751,   752,   802,   851,   1001,  1002,  1051,  1101,  1103,  1201,  1252,  1313,
+                // Not 1101: by its journal title (Lore, A2 17:37 and A8 21:13 on 16-11) it is «Hábitos negros», the
+                // farmer's daughter to be rescued (fails if she dies), not a kill.
+                701,   703,   751,   752,   802,   851,   1001,  1002,  1051,  1103,  1201,  1252,  1313,
                 1353,  10250, 10251, 10252, 10253, 10259, 15003, 15007, 15011, 15012, 15013, 15015, 15018, 15020,
                 15024, 15028, 15029, 15030, 15032, 15034, 15038, 15041, 15042, 15043, 15047, 15048, 15050, 15056,
                 15057, 15058, 15059, 15063, 15068, 15073, 15074, 15075, 15076, 15078, 15081, 15082};
@@ -7705,7 +7789,13 @@ namespace
                 const QuestGoal& looked = g_questBook.front();
                 const uint64_t lookKey = (static_cast<uint64_t>(static_cast<uint32_t>(looked.x / kTileSize)) << 32) |
                                          static_cast<uint32_t>(looked.y / kTileSize);
-                if (lookKey != s_lookKey || !s_lookSince || (g_lastTargetAt && static_cast<int>(g_lastTargetAt - s_lookSince) > 0) ||
+                // Counted only with the hero at the goal (within its ring, 30 tiles at least): the quests' session,
+                // 2026-11-16, A8 04:00:45 «6 min around the goal 3382,3300 … left 30 min» with the hero 529 tiles off.
+                const bool lookFar = std::max(std::abs(static_cast<double>(looked.x - self->x)),
+                                              std::abs(static_cast<double>(looked.y - self->y))) >
+                                     std::max(looked.radius, 30.0 * kTileSize);
+                if (lookFar || lookKey != s_lookKey || !s_lookSince ||
+                    (g_lastTargetAt && static_cast<int>(g_lastTargetAt - s_lookSince) > 0) ||
                     (g_questsDoneAt && static_cast<int>(g_questsDoneAt - s_lookSince) > 0))
                 {
                     s_lookKey = lookKey;
