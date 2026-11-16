@@ -3028,6 +3028,14 @@ namespace
             {
                 continue;
             }
+            // Across the water: inside the flood fill's window and not reached by it, and not at the hero or the hirelings
+            // (the stuck solver, 2026-11-16, A6: goblin warriors of level 9 on the far bank of the river, 7-13 tiles off,
+            // 1% of health to lose, taken for a fight every 20 s for 12 min: «fight over, 1-7 s, 0 killed, 0 experience»).
+            if (!engagedFoe && !current && d > melee &&
+                Whereabouts::reachable(static_cast<int>(f.x / kTileSize), static_cast<int>(f.y / kTileSize)) == 0)
+            {
+                continue;
+            }
             // Careful after dying again and again from the same save (the live verifier, 2026-11-11: A1 and A3 loaded
             // the same game a dozen times, the potions drunk and dead at the same spot each time): only those not
             // above the hero's level are sought; a stronger one only once it strikes the hero in the melee.
@@ -4540,6 +4548,19 @@ namespace
                 continue;
             }
             const double d = std::hypot(static_cast<double>(x - tx), static_cast<double>(y - ty));
+            // Not across water the map knows (the stuck solver, 2026-11-16, A6: the portal 3180,2672 26 tiles off over a
+            // river 7-10 tiles wide, the entrance 3094,2784 over the water band 2677-2683: «no nearer to tile 3180,2672 in
+            // 20 s», 40 min on the bank): 40 samples along the straight line, four of them not walkable is a river.
+            int wet = 0;
+            for (int k = 1; k <= 40 && wet < 4; ++k)
+            {
+                const double f = k / 41.0;
+                wet += ClickWalk::walkable(layer, static_cast<int>(tx + (x - tx) * f), static_cast<int>(ty + (y - ty) * f)) == 0;
+            }
+            if (wet >= 4)
+            {
+                continue;
+            }
             if (d < best)
             {
                 best = d;
