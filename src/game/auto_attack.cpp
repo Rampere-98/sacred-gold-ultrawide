@@ -202,8 +202,8 @@ namespace
 
     // A town's storage chest (TYPE_OBJECT_CHEST_STATIC): all of them open the hero's one storage, inventory entry 0x11
     // ([0xAD4448] + 0x11 * 0x1180, the backpack's layout: cells of 12 bytes from +0x18, width +0x115C, height +0x115E;
-    // live 20x10, Manolito block BH). An item's base resistances: its info (item +0x118) s16 +0x32..+0x38 physical,
-    // fire, magic, poison. Read only: nothing is moved yet.
+    // live 20x10, Manolito block BH). Its contents are read through the game's own functions (Gear's GetEntry and
+    // GetInfo): reading the pointers by hand here crashed every copy 35 s after loading (2026-11-16, DDRAW.dll+d801).
     constexpr uint16_t kStorageChest = 0x1450;
 
     void storageSeen(cObject* object)
@@ -216,41 +216,7 @@ namespace
         const int layer = *(reinterpret_cast<const uint8_t*>(object) + 0x24);
         const int tx = static_cast<int>(object->x / 53.66563), ty = static_cast<int>(object->y / 53.66563);  // kTileSize, defined further on
         MapMemory::mark(MapMemory::Mark::Storage, layer, object->x, object->y);
-        const uint8_t* inv = *reinterpret_cast<uint8_t* const*>(0xAD4448);
-        const uint8_t* entry = inv ? inv + 0x11 * 0x1180 : nullptr;
-        const int w = entry ? *reinterpret_cast<const uint16_t*>(entry + 0x115C) : 0;
-        const int h = entry ? *reinterpret_cast<const uint16_t*>(entry + 0x115E) : 0;
-        if (w <= 0 || h <= 0 || w * h > 0x100)
-        {
-            LOG("AutoAttack: storage chest {:x} at tile {},{} (layer {}): never loot; its grid unread ({}x{})", object->id,
-                tx, ty, layer, w, h);
-            return;
-        }
-        cObjectManager* objects = cObjectManager::instance();
-        int items = 0, resisting = 0;
-        int sum[4] = {};
-        for (int i = 0; i < w * h; ++i)
-        {
-            const uint32_t id = *reinterpret_cast<const uint32_t*>(entry + 0x18 + 12 * i);
-            cObject* item = id && objects ? objects->object(id) : nullptr;
-            if (!item)
-            {
-                continue;
-            }
-            ++items;
-            const uint8_t* info = *reinterpret_cast<uint8_t* const*>(reinterpret_cast<const uint8_t*>(item) + 0x118);
-            bool any = false;
-            for (int k = 0; info && k < 4; ++k)
-            {
-                const int r = *reinterpret_cast<const int16_t*>(info + 0x32 + 2 * k);
-                sum[k] += r;
-                any = any || r > 0;
-            }
-            resisting += any ? 1 : 0;
-        }
-        LOG("AutoAttack: storage chest {:x} at tile {},{} (layer {}): never loot; the storage {}x{} holds {} items, {} with "
-            "resistances (physical {}, fire {}, magic {}, poison {})", object->id, tx, ty, layer, w, h, items, resisting,
-            sum[0], sum[1], sum[2], sum[3]);
+        LOG("AutoAttack: storage chest {:x} at tile {},{} (layer {}): the hero's store, never loot", object->id, tx, ty, layer);
     }
 
     // What the object is: a cChest3D (its own class, by RTTI; it derives from cItemBase) is a container; anything
