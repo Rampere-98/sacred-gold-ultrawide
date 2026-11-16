@@ -5093,6 +5093,15 @@ namespace
             g_travel.bestAt = now;      // the wait is no lack of progress
             return true;
         }
+        // The far route is being planned (up to two minutes): no «no nearer», no goal given up meanwhile (the stuck
+        // solver, 2026-11-16: A1's goals 1785,3050 and 1676,2352 started 28 times and given up 30 times, A3's and A4's
+        // alike).
+        if (ClickWalk::planning())
+        {
+            g_travel.lastAt = now;
+            g_travel.bestAt = now;
+            return true;
+        }
         if (towardWayOut(now, self, x, y))
         {
             g_travel.lastAt = now;
@@ -5891,7 +5900,8 @@ namespace
             static int s_step = 0;
             // Busy (collecting, talking, at a shop or a craftsman): the clock starts again (the solver, 2026-11-12: 2 of 8
             // watch trips came right after a collection, the time spent picking up counted as standing still).
-            const bool busy = UiNav::npcDialogOpen() || g_collecting || Gear::shopOpen() || Gear::craftsmanOpen();
+            const bool busy = UiNav::npcDialogOpen() || g_collecting || Gear::shopOpen() || Gear::craftsmanOpen() ||
+                              ClickWalk::planning();
             if (!s_since || busy ||
                 std::hypot(static_cast<double>(self->x - s_px), static_cast<double>(self->y - s_py)) > 3.0 * kTileSize)
             {

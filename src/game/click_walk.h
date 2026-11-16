@@ -32,6 +32,9 @@ namespace ClickWalk
     void cancel();
     // Any routed walk under way (the player's or the agent's), or one asked for and not yet sent.
     bool routing();
+    // A far route is being planned this moment, on the window's thread (up to two minutes): the agent's no-progress
+    // clocks wait.
+    bool planning();
 
     // Whether a walker may stand on world tile (tx, ty) of `layer`, by the game's own tile test where its sector is
     // loaded, else as the world files have it (WorldTiles: surface only, doors counted walkable): 1 yes, 0 no, -1 not

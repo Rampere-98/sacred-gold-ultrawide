@@ -538,6 +538,7 @@ namespace
 
     // A far walk in progress (the window thread's, but for g_active, which the render thread reads).
     std::atomic<bool> g_active{false};
+    std::atomic<bool> g_planning{false};
     bool g_ours = false;                        // the order going out is our next leg
     bool g_asking = false;                      // the order going out is one asked for on the agent's map
     std::atomic<bool> g_fromMap{false};         // the far walk is one asked for on the agent's map
@@ -682,8 +683,10 @@ namespace
                     g_grid.layer = layerOf(creature);
                     const Cell from = cellOf(creature->x, creature->y);
                     Cell end{};
+                    g_planning = true;
                     const DWORD planStart = GetTickCount();
                     const bool planned = plan(from, cellOf(order->x, order->y)) && nextLeg(from, end);
+                    g_planning = false;
                     // Told for the first 60 far walks whatever the debug switch (the stuck solver, 2026-11-16: A3's main
                     // quest 1000-1330 tiles out launched 14 times and A4's goals 566-699 tiles out for 26 min, with not
                     // one line to say whether the plan was found; the walk then goes on as the crude 30-tile order).
@@ -1064,6 +1067,11 @@ void ClickWalk::cancel()
 bool ClickWalk::routing()
 {
     return g_active || g_askPending;
+}
+
+bool ClickWalk::planning()
+{
+    return g_planning;
 }
 
 bool ClickWalk::walking()

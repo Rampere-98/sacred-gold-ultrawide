@@ -1884,7 +1884,44 @@ std::vector<std::pair<int, int>> MapMemory::doorsThatOpen(int layer, int x0, int
 
 bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out)
 {
-    return routeWithin(layer, fromX, fromY, toX, toY, 48, out);
+    // A far route is kept for the walks that follow (the stuck solver, 2026-11-16, K1's lines: «plan found in 123594 ms»
+    // for 1676,2352 on A2, 28-45 s for 2644,3165 on A3, A5 and A8, again at each start of the same walk; the window's
+    // thread worked on it while the agent gave the goal up after 20-25 s and began again).
+    struct Kept
+    {
+        int layer, fromX, fromY, toX, toY;
+        DWORD at;
+        bool ok;
+        std::vector<std::pair<int, int>> cells;
+    };
+    static std::mutex s_keptLock;
+    static std::deque<Kept> s_kept;
+    const bool isFar = std::max(std::abs(toX - fromX), std::abs(toY - fromY)) > 150;
+    if (isFar)
+    {
+        const DWORD now = GetTickCount();
+        const std::lock_guard lock(s_keptLock);
+        for (const Kept& k : s_kept)
+        {
+            if (k.layer == layer && std::abs(k.toX - toX) <= 4 && std::abs(k.toY - toY) <= 4 &&
+                std::abs(k.fromX - fromX) <= 24 && std::abs(k.fromY - fromY) <= 24 && now - k.at < (k.ok ? 900000u : 120000u))
+            {
+                out = k.cells;
+                return k.ok;
+            }
+        }
+    }
+    const bool ok = routeWithin(layer, fromX, fromY, toX, toY, 48, out);
+    if (isFar)
+    {
+        const std::lock_guard lock(s_keptLock);
+        s_kept.push_front(Kept{layer, fromX, fromY, toX, toY, GetTickCount(), ok, ok ? out : std::vector<std::pair<int, int>>{}});
+        if (s_kept.size() > 6)
+        {
+            s_kept.pop_back();
+        }
+    }
+    return ok;
 }
 
 bool MapMemory::routeWide(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out)
