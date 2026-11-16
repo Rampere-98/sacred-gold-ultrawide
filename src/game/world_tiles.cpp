@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -46,6 +47,7 @@ namespace
     std::vector<int16_t> g_slotOf;              // by sy*100 + sx: its cache slot, -1 none
     std::vector<Slot> g_slots;
     uint32_t g_clock = 0;
+    uint32_t g_inflated = 0;                    // sectors read and inflated (cache misses), under g_lock
     bool g_warned = false;
 
     std::wstring worldDir()
@@ -149,6 +151,7 @@ namespace
             return &g_slots[cached];
         }
         const Block& b = g_blocks[code];
+        ++g_inflated;
         std::vector<uint8_t> packed(b.size);
         std::vector<uint8_t> raw(kBlockSize);
         uLongf rawLen = static_cast<uLongf>(raw.size());
@@ -215,25 +218,58 @@ static int tileByte(int layer, int tileX, int tileY)
 
 void WorldTiles::fill(int tileX, int tileY, int w, int h, int8_t* out)
 {
+    // The box filled at the game's priority at least (the coordinator, 2026-11-16 20:30: boxes of 55x58 to 117x237
+    // took 1.2-9.5 s here, 0-15 ms in all else): a fill on a lowest priority thread (the wide route, the lengths)
+    // holding this lock for a row was left without the processor by eight copies, and every other thread wanting the
+    // lock, the route net's at the game's priority among them, waited for it the seconds Windows takes to lift a
+    // starved thread. Its own priority back at the end.
+    const int priorityWas = GetThreadPriority(GetCurrentThread());
+    const bool raised = priorityWas != THREAD_PRIORITY_ERROR_RETURN && priorityWas < THREAD_PRIORITY_NORMAL;
+    if (raised)
+    {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
+    }
+    const DWORD t0 = GetTickCount();
+    DWORD waited = 0, yielded = 0, yieldedAt = t0;
+    uint32_t inflatedWas = 0, inflated = 0;
     // One lock a row (the code reviewer: a lock a tile held up a big route by 100 ms; one for the whole box held the
     // other tile tests for seconds on a far route).
     for (int y = 0; y < h; ++y)
     {
         {
+            const DWORD askedAt = GetTickCount();
             std::lock_guard<std::mutex> lock(g_lock);
+            waited += GetTickCount() - askedAt;
+            inflatedWas = g_inflated;
             for (int x = 0; x < w; ++x)
             {
                 const int b = tileByteLocked(0, tileX + x, tileY + y);
                 out[static_cast<size_t>(y) * w + x] = static_cast<int8_t>(b == -1 ? -1 : b < 0 ? 0 : b);
             }
+            inflated += g_inflated - inflatedWas;
         }
         // The lock is not fair: taken again at once for the next row, the frame's own tile tests waited on it for
-        // the whole box (2026-11-14: up to 9.6 s without a frame, the presenting thread in tileByte's lock). Every
-        // few rows the others get their turn.
-        if ((y & 3) == 3)
+        // the whole box (2026-11-14: up to 9.6 s without a frame, the presenting thread in tileByte's lock). The
+        // lock is let go between rows, and tileByte no longer waits for it (three tries, then «not known»); a turn
+        // given every 4 rows cost 85-215 ms each with eight copies on the processor (20:30: 1.2-9.5 s a box), so
+        // one at most every 50 ms of filling.
+        if (GetTickCount() - yieldedAt >= 50)
         {
+            const DWORD before = GetTickCount();
             Sleep(0);
+            yielded += GetTickCount() - before;
+            yieldedAt = GetTickCount();
         }
+    }
+    if (raised)
+    {
+        SetThreadPriority(GetCurrentThread(), priorityWas);
+    }
+    static std::atomic<int> s_told{0};
+    if (const DWORD took = GetTickCount() - t0; took > 300 && s_told++ < 200)
+    {
+        LOG("World tiles: box {}x{} filled in {} ms: {} waiting for the files' lock, {} in turns given, {} sectors "
+            "inflated (thread priority {})", w, h, took, waited, yielded, inflated, priorityWas);
     }
 }
 
