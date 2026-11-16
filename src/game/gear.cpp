@@ -3351,15 +3351,27 @@ void Gear::onFrame(DWORD now, bool calm)
     std::call_once(once, install);
     // A test of the weapon slots (the presets session): SacredBild-weapon-slot beside the exe, holding 1-5, takes
     // that weapon slot as the key 1-5 does (the game's selectWeaponSlot, a player's action), once; the file removed.
+    // Only in the agents' copies (SacredA1..A8), never the player's folder; not while an art is under way (the 4502AE
+    // crashes came a few ms after a switch), and the file only opened once it is there (the reviewer, N1).
     static DWORD askedAt = 0;
-    if (g_ready && g_selectSlot && (!askedAt || now - askedAt > 1000))
-    {
-        askedAt = now | 1;
+    static const std::wstring s_askPath = [] {
         wchar_t exe[MAX_PATH] = {};
         GetModuleFileNameW(nullptr, exe, MAX_PATH);
-        std::wstring path = exe;
-        path = path.substr(0, path.find_last_of(L"\\/") + 1) + L"SacredBild-weapon-slot";
-        if (FILE* f = _wfopen(path.c_str(), L"rb"))
+        std::wstring dir = exe;
+        dir = dir.substr(0, dir.find_last_of(L"\\/"));
+        const std::wstring folder = dir.substr(dir.find_last_of(L"\\/") + 1);
+        return folder.rfind(L"SacredA", 0) == 0 ? dir + L"\\SacredBild-weapon-slot" : std::wstring();
+    }();
+    if (g_ready && g_selectSlot && !s_askPath.empty() && (!askedAt || now - askedAt > 1000))
+    {
+        askedAt = now | 1;
+        const std::wstring& path = s_askPath;
+        if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES || Tactics::busy(now) ||
+            !Act::may(Act::Kind::WeaponSlots))
+        {
+            // nothing asked, or later (the file kept)
+        }
+        else if (FILE* f = _wfopen(path.c_str(), L"rb"))
         {
             int slot = 0;
             const int read = fscanf(f, "%d", &slot);
