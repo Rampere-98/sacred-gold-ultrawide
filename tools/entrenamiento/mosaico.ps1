@@ -147,13 +147,13 @@ public class Mosaico : Form
         Screen s = Screen.AllScreens.OrderByDescending(x => (double)x.Bounds.Width / x.Bounds.Height).First();
         Bounds = s.WorkingArea;
         KeyPreview = true;
-        KeyDown += (o, e) => { if (e.KeyCode == Keys.Escape) Close(); };
+        KeyDown += (o, e) => { if (e.KeyCode == Keys.Escape) Close(); else if (e.KeyCode == Keys.R) ShowWheel(wheel == null || !wheel.Visible); };
         MouseDoubleClick += (o, e) => { int c = CellAt(e.Location); zoomed = zoomed >= 0 ? -1 : c; PlaceThumbs(); Invalidate(); };
         MouseUp += (o, e) => { if (e.Button == MouseButtons.Right) { int c = CellAt(e.Location); if (c >= 0) CellMenu(c).Show(this, e.Location); } };
         BuildBar();
         timer.Interval = 1000;
         timer.Tick += (o, e) => Tick();
-        Shown += (o, e) => { Tick(); timer.Start(); };
+        Shown += (o, e) => { Tick(); timer.Start(); ShowWheel(true); };
         FormClosed += (o, e) => { for (int i = 0; i < 8; i++) if (thumb[i] != IntPtr.Zero) DwmUnregisterThumbnail(thumb[i]); };
     }
 
@@ -197,6 +197,8 @@ public class Mosaico : Form
             "El vigilante guarda y reinicia solo las copias que llevan 20 min sin progreso");
         Btn(bar, "Relanzar lanzador", grey, (o, e) => { if (Ask("¿Parar y volver a arrancar el lanzador de las copias?")) RestartLauncher(); },
             "Para todos los lanzadores (agentes.sh) y arranca uno; reabre las copias que falten");
+        Btn(bar, "Rueda", Color.FromArgb(110, 35, 35), (o, e) => ShowWheel(wheel == null || !wheel.Visible),
+            "Muestra u oculta la rueda del centro: elige un grupo (A1–A4, A5–A8 o todas) y una acción solo para ese grupo (tecla R)");
         Btn(bar, "Registro del vigilante", grey, (o, e) => Open("notepad.exe", Path.Combine(tools, "vigilante.log")), "Lo que el vigilante ha cerrado o reiniciado");
         Btn(bar, "Atascos", grey, (o, e) => Open("explorer.exe", Path.Combine(tools, "atascos")), "Carpeta de atascos guardados para el solucionador");
         status = new Label { AutoSize = true, ForeColor = Color.Silver, Font = small, Margin = new Padding(14, 9, 3, 3) };
@@ -522,6 +524,9 @@ public class Mosaico : Form
                 Hero h = heroes[i];
                 g.FillRectangle(barBrush, c.X, c.Y, c.Width, Bar);
                 g.DrawRectangle(frame, c.X, c.Y, c.Width - 1, c.Height - 1);
+                // The wheel's group outlined, when it is one half.
+                if (wheel != null && wheel.Visible && group != 2 && InGroup(i))
+                    using (var sel = new Pen(Color.FromArgb(200, 60, 60), 3f)) g.DrawRectangle(sel, c.X + 1, c.Y + 1, c.Width - 3, c.Height - 3);
                 bool alive = (DateTime.Now - h.LastLine).TotalSeconds < 30;
                 string head = "A" + (i + 1) + (h.Class.Length > 0 ? "  ·  " + h.Class + "  ·  nivel " + h.Level : "") +
                               (h.Difficulty.Length > 0 ? "  ·  " + h.Difficulty + "  ·  " + h.Campaign : "") +
@@ -635,6 +640,109 @@ public class Mosaico : Form
             TextRenderer.DrawText(g, ev.At.ToString("HH:mm:ss") + "  " + ev.Text, small, new Rectangle(r.X + 16, y, r.Width - 20, 15),
                                   j == h.Events.Count - 1 ? Color.White : Color.Silver, TextFormatFlags.EndEllipsis);
             y += 15;
+        }
+    }
+
+    // ---- The wheel (the player's sketch, 2026-11-16): a round panel over the middle of the mosaic. Its hub picks the
+    // group (A1-A4, A5-A8 or all); its ring runs an action on that group only. A window of its own: the games'
+    // thumbnails cover whatever the mosaic itself draws under them. ----
+
+    int group = 2;                      // 0 A1-A4, 1 A5-A8, 2 all
+    Rueda wheel;
+    static readonly string[] GroupNames = { "A1 – A4", "A5 – A8", "Todas" };
+    List<int> GroupCopies() { return (group == 0 ? Enumerable.Range(0, 4) : group == 1 ? Enumerable.Range(4, 4) : Enumerable.Range(0, 8)).ToList(); }
+    bool InGroup(int i) { return group == 2 || (group == 0 ? i < 4 : i >= 4); }
+
+    void ShowWheel(bool show)
+    {
+        if (wheel == null) wheel = new Rueda(this);
+        if (show) { wheel.Place(); if (!wheel.Visible) wheel.Show(this); } else wheel.Hide();
+        Invalidate();
+    }
+
+    class Rueda : Form
+    {
+        const int R = 150, Hub = 58;
+        readonly Mosaico m;
+        int hover = -1;                 // 0..4 a sector of the ring, 10 + n the hub's group row n
+        static readonly string[] Actions = { "Guardar", "Reiniciar", "Reiniciar parados", "Pausar agentes", "Reanudar agentes" };
+        static readonly Color[] ActionColor = {
+            Color.FromArgb(35, 95, 55), Color.FromArgb(120, 40, 40), Color.FromArgb(40, 70, 120), Color.FromArgb(70, 70, 86), Color.FromArgb(60, 80, 70) };
+
+        public Rueda(Mosaico m)
+        {
+            this.m = m;
+            FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual;
+            Size = new Size(2 * R, 2 * R); BackColor = Color.FromArgb(18, 18, 24); DoubleBuffered = true; Opacity = 0.95;
+            var path = new GraphicsPath(); path.AddEllipse(0, 0, 2 * R, 2 * R); Region = new Region(path);
+            Cursor = Cursors.Hand;
+            MouseMove += (o, e) => { int h = HitTest(e.Location); if (h != hover) { hover = h; Invalidate(); } };
+            MouseLeave += (o, e) => { hover = -1; Invalidate(); };
+            MouseClick += (o, e) => { if (e.Button == MouseButtons.Left) RunAt(HitTest(e.Location)); };
+        }
+
+        public void Place()
+        {
+            Rectangle b = m.Bounds;
+            Location = new Point(b.X + b.Width / 2 - R, b.Y + TopH + (b.Height - TopH) / 2 - R);
+        }
+
+        int HitTest(Point p)
+        {
+            double dx = p.X - R, dy = p.Y - R, r = Math.Sqrt(dx * dx + dy * dy);
+            if (r > R) return -1;
+            if (r <= Hub) return 10 + Math.Max(0, Math.Min(2, (int)((dy + Hub) / (2.0 * Hub / 3))));
+            double a = Math.Atan2(dy, dx) * 180 / Math.PI + 90;     // 0 at the top, clockwise
+            if (a < 0) a += 360;
+            return (int)(a / 72) % 5;
+        }
+
+        void RunAt(int h)
+        {
+            if (h >= 10) { m.group = h - 10; m.Invalidate(); Invalidate(); return; }
+            if (h < 0) return;
+            List<int> copies = m.GroupCopies();
+            string name = GroupNames[m.group];
+            switch (h)
+            {
+                case 0: foreach (int i in copies) m.SaveNow(i); break;
+                case 1: if (m.Ask("¿Guardar y reiniciar " + name + "?")) foreach (int i in copies) m.Restart(i); break;
+                case 2: foreach (int i in copies) if (m.Stale(i)) m.Restart(i); break;
+                case 3: foreach (int i in copies) m.SetPaused(i, true); break;
+                case 4: foreach (int i in copies) m.SetPaused(i, false); break;
+            }
+            m.Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            var disc = new Rectangle(0, 0, 2 * R - 1, 2 * R - 1);
+            var flags = TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak;
+            for (int s = 0; s < 5; s++)
+            {
+                float start = -90 + s * 72;
+                Color col = hover == s ? ControlPaint.Light(ActionColor[s], 0.5f) : ActionColor[s];
+                using (var b = new SolidBrush(col)) g.FillPie(b, disc, start, 72);
+                using (var p = new Pen(BackColor, 3f)) g.DrawPie(p, disc, start, 72);
+                double mid = (start + 36) * Math.PI / 180, rr = (R + Hub) / 2.0 + 3;
+                int cx = (int)(R + Math.Cos(mid) * rr), cy = (int)(R + Math.Sin(mid) * rr);
+                TextRenderer.DrawText(g, Actions[s], m.small, new Rectangle(cx - 46, cy - 20, 92, 40), Color.White, flags);
+            }
+            var hub = new Rectangle(R - Hub, R - Hub, 2 * Hub, 2 * Hub);
+            using (var b = new SolidBrush(Color.FromArgb(26, 26, 34))) g.FillEllipse(b, hub);
+            using (var p = new Pen(Color.FromArgb(200, 60, 60), 2f)) g.DrawEllipse(p, hub);
+            float rowH = 2f * Hub / 3;
+            for (int k = 0; k < 3; k++)
+            {
+                var row = new Rectangle(R - Hub + 12, (int)(R - Hub + k * rowH), 2 * Hub - 24, (int)rowH);
+                bool selected = m.group == k;
+                if (selected) using (var b = new SolidBrush(Color.FromArgb(160, 45, 45))) g.FillRectangle(b, row.X, row.Y + 5, row.Width, row.Height - 10);
+                TextRenderer.DrawText(g, GroupNames[k], m.small, row, selected ? Color.White : hover == 10 + k ? Color.Gainsboro : Color.Gray,
+                                      TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
         }
     }
 }
