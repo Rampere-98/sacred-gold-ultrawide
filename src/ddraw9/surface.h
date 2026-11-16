@@ -97,6 +97,9 @@ namespace DDraw9
         // The texture to draw with; uploads changes made through the CPU first.
         d9::IDirect3DBaseTexture9* texture();
         bool uploadPending() const { return m_dirty.load(std::memory_order_relaxed); }
+        // [Textures]: true if `iface` is one of our textures and SacredBild\textures has a replacement for its current
+        // content (so copies of it, e.g. in atlas pages, would show the original). Also dumps it with Dump=1.
+        static bool replaced(const void* iface);
 
         // IUnknown
         STDMETHOD(QueryInterface)(REFIID riid, LPVOID* out) override;
@@ -213,6 +216,14 @@ namespace DDraw9
         d9::IDirect3DTexture9* m_sysTexture = nullptr;
         d9::IDirect3DSurface9* m_sysLevel = nullptr;
         std::atomic<bool> m_dirty{false};
+        // [Textures]: content hash of the system memory copy as of m_hashedUniqueness, and its replacement.
+        bool refreshContent();
+        DWORD m_hashedUniqueness = 0;
+        bool m_hashValid = false;
+        bool m_replaced = false;                        // a replacement exists for m_hash
+        uint8_t m_dumps = 0;                            // contents of this surface dumped (frequently changing ones stop)
+        uint64_t m_hash = 0;
+        d9::IDirect3DTexture9* m_replacement = nullptr; // owned by TexturePack, null until it is ready
 
         // Memory
         HBITMAP m_dib = nullptr;

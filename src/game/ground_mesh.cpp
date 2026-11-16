@@ -4,6 +4,7 @@
 #include "game/resolution.h"
 #include "game/wide_sectors.h"
 #include "ddraw9/ground.h"
+#include "ddraw9/surface.h"
 #include "config/ddraw.h"
 #include "config/debug.h"
 #include "config/render.h"
@@ -355,6 +356,12 @@ namespace
             if (w <= 0 || h <= 0 || w > kAtlasCell - 2 || h > kAtlasCell - 2)
             {
                 LOG("Ground mesh: a ground texture is {}x{}, larger than the atlas cells", w, h);
+                return Build::Unsupported;
+            }
+            if (DDraw9::Surface::replaced(surface))
+            {
+                // [Textures] Replace: the cells hold the original size; the game's own ground path draws the replacement.
+                LOG("Ground mesh: a ground texture has a replacement in SacredBild\\textures");
                 return Build::Unsupported;
             }
             AtlasPage* page = nullptr;
