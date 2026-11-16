@@ -639,6 +639,44 @@ namespace
                objects && objects->creature(engine->controlled);
     }
 
+    // The first of the crude order's directions whose 30 tiles do not pass within 4 tiles of an entrance the map knows
+    // (the stuck solver, 2026-11-16, A8 at the baron's castle, 1631-1637,2325-2349: every straight order west went in by a
+    // door of the castle, the game's path finder keeps doors and stairs, the hero was on layer 1 and its intent turned
+    // to «explore», out again, and the order went straight in again; 10 min of «Intent quest / explore»).
+    int firstTryAvoidingEntrances(const cCreature* creature, double dx, double dy, double tiles)
+    {
+        const int tx = static_cast<int>(creature->x / kTileSize), ty = static_cast<int>(creature->y / kTileSize);
+        const auto doors = MapMemory::waysOut(layerOf(creature), tx, ty, 40, true);
+        if (doors.empty() || tiles <= 0.0)
+        {
+            return 0;
+        }
+        for (int i = 0; i < kTryCount; ++i)
+        {
+            const double a = kTries[i].degrees * 3.14159265358979 / 180.0;
+            const double scale = std::min(1.0, kTries[i].tiles / tiles);
+            const double rx = (dx * std::cos(a) - dy * std::sin(a)) * scale / kTileSize;
+            const double ry = (dx * std::sin(a) + dy * std::cos(a)) * scale / kTileSize;
+            const double len2 = rx * rx + ry * ry;
+            bool clear = true;
+            for (const auto& [ex, ey] : doors)
+            {
+                const double px = ex - tx, py = ey - ty;
+                const double u = len2 > 0.0 ? std::clamp((px * rx + py * ry) / len2, 0.0, 1.0) : 0.0;
+                if (std::hypot(px - u * rx, py - u * ry) < 4.0)
+                {
+                    clear = false;
+                    break;
+                }
+            }
+            if (clear)
+            {
+                return i;
+            }
+        }
+        return 0;
+    }
+
     void __fastcall hookSendOrder(cEngine* engine, void* edx, cCreature* creature, cOrder* order)
     {
         cObjectManager* objects = cObjectManager::instance();
@@ -759,7 +797,8 @@ namespace
                 }
                 if (!g_routed && !g_native)
                 {
-                    const Try t = ours ? kTries[g_try] : kTries[0];
+                    const int firstTry = ours || !agentOrder() ? 0 : firstTryAvoidingEntrances(creature, dx, dy, tiles);
+                    const Try t = ours ? kTries[g_try] : kTries[firstTry];
                     if (tiles > t.tiles || (ours && t.degrees != 0.0))
                     {
                         if (!ours)
@@ -767,7 +806,7 @@ namespace
                             // Remember the clicked spot; the hero walks there leg by leg.
                             g_goalX = order->x;
                             g_goalY = order->y;
-                            g_try = 0;
+                            g_try = firstTry;
                             g_best = tiles;
                             g_staleLegs = 0;
                             g_active = true;

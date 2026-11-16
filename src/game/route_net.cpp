@@ -249,6 +249,16 @@ namespace
         }
         // g_nodes and g_ways are only written by load(), done above: read without the lock from here.
         int triedA = 0, triedB = 0;
+        // No node within reach of one end: the stretches of the other end are not worked out (the stuck solver,
+        // 2026-11-16, A8: «no node reached near the goal (0 within 120 tiles, 0 tried), 107875 ms»: the hero's side was
+        // searched first, 108 s, for a goal in ground no node has been laid in).
+        if (nearStart.empty() || nearGoal.empty())
+        {
+            LOG("RouteNet: trip {},{} to {},{} on layer {}: no node within {} tiles of the {}: not worked out", fromX, fromY,
+                toX, toY, layer, kReach, nearStart.empty() ? "hero" : "goal");
+            k.at = GetTickCount();
+            return k;
+        }
         std::vector<End> a = ends(nearStart, layer, fromX, fromY, true, triedA);
         std::vector<End> b = a.empty() ? std::vector<End>{} : ends(nearGoal, layer, goalX, goalY, false, triedB);
         if (a.empty() || b.empty())
