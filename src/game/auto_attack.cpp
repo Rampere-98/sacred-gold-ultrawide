@@ -4874,6 +4874,19 @@ namespace
         {
             g_onFootUntil = now + 60000;
         }
+        // The landing the game names for a cave (tprausz) lies beside its mouth, not on it (A1, 2026-11-16: the mouth of
+        // cave 2.3, landing 3042,2892, the goal 3046,2892 four tiles on along a one-tile corridor; the hero reached
+        // the landing, sat out the 20 s hold with no order and the position watch left the goal 3 min). On the landing
+        // with the goal within 6 tiles: on to the goal itself, the hold short.
+        if (std::hypot(bx - htx, by - hty) <= 1.5 && best <= 6.0 && std::hypot(gx - htx, gy - hty) > 1.5)
+        {
+            LOG("AutoAttack: no nearer to tile {},{}: on the landing at {},{}: on to the goal ({:.0f} tiles)", gx, gy, bx, by,
+                std::hypot(gx - htx, gy - hty));
+            ClickWalk::walkTo(static_cast<int32_t>((gx + 0.5) * kTileSize), static_cast<int32_t>((gy + 0.5) * kTileSize), false);
+            g_doorHoldUntil = now + 3000;
+            g_entranceHoldUntil = now + 3000;
+            return true;
+        }
         if (std::hypot(bx - htx, by - hty) <= 1.5)
         {
             // On it already: a step off, the next try walks back onto it (a way in fires on stepping on).
@@ -5437,7 +5450,10 @@ namespace
                 double d = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
                 // With no healing potion left a merchant is worth a long walk (the stuck solver, 2026-11-14: A8's
                 // Daemon died 10 times in 29 min, «no merchant known within 150 tiles» at each load, 13 325 gold).
-                const double shopReach = (Gear::healingLeft() == 0 ? 400.0 : 150.0) * kTileSize;
+                // The merchant already gone for keeps twice the reach: the walk's length (wayLength) rises and falls
+                // around the limit as the hero fights its way there, and the choice flipped quest/shop every 10-50 s
+                // (the stuck solver, 2026-11-16, A2: «off to merchant 85e (400 tiles)», six flips in 5 minutes).
+                const double shopReach = (Gear::healingLeft() == 0 ? 400.0 : 150.0) * (m.id == g_shopId ? 2.0 : 1.0) * kTileSize;
                 if (m.layer == layer && d <= shopReach)
                 {
                     d = wayLength(self->x, self->y, m.x, m.y);    // the walk, not the straight line
