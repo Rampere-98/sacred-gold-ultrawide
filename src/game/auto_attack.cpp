@@ -8,6 +8,7 @@
 #include "game/agent_save.h"
 #include "game/teleports.h"
 #include "game/portals.h"
+#include "game/route_net.h"
 #include "game/agent_cursor.h"
 #include "game/agent_overlay.h"
 #include "game/hero_build.h"
@@ -5511,12 +5512,19 @@ namespace
         {
             return false;
         }
-        Portals::Plan plan;
-        const bool through = Portals::plan(htx, hty, gtx, gty, skip, plan);
-        if (plan.walk < Portals::kMinWalkTiles)
+        // The walk itself by the route net (round mountains and rivers it is longer than the straight line); the
+        // straight line without the net. Asked again while it is worked out.
+        if (std::hypot(gtx - htx, gty - hty) < Portals::kMinWalkTiles)
         {
             return false;
         }
+        const float walkNet = RouteNet::walkTiles(htx, hty, gtx, gty);
+        if (walkNet == -1.0f)
+        {
+            return false;
+        }
+        Portals::Plan plan;
+        const bool through = Portals::plan(htx, hty, gtx, gty, skip, walkNet > 0.0f ? walkNet : 0.0, plan);
         if (!through)
         {
             g_portalTrip.goal = goal;
@@ -5525,13 +5533,22 @@ namespace
                 Portals::joined());
             return false;
         }
-        // Both walks over what the map knows (a goal inside a cave, or across the sea, has none): the routes'
-        // lengths for the as-the-crow-flies ones, worked out on their thread (on foot meanwhile; asked again).
+        // Both walks by the route net, else over what the map knows (a goal inside a cave, or across the sea, has
+        // neither): their lengths for the as-the-crow-flies ones, worked out on their threads (on foot meanwhile;
+        // asked again).
         int ttx, tty;
         Portals::tile(plan.from, ftx, fty);
         Portals::tile(plan.to, ttx, tty);
-        const float toPortal = MapMemory::routeTiles(0, htx, hty, ftx, fty);
-        const float fromPortal = MapMemory::routeTiles(0, ttx, tty, gtx, gty);
+        const auto leg = [](int ax, int ay, int bx, int by) {
+            const float net = RouteNet::walkTiles(ax, ay, bx, by);
+            return net == -2.0f ? MapMemory::routeTiles(0, ax, ay, bx, by) : net;
+        };
+        const float toPortal = leg(htx, hty, ftx, fty);
+        if (toPortal == -1.0f)
+        {
+            return false;
+        }
+        const float fromPortal = leg(ttx, tty, gtx, gty);
         if (toPortal == -1.0f || fromPortal == -1.0f)
         {
             return false;
@@ -5552,8 +5569,9 @@ namespace
             g_portalTrip.goal = ~0ull;  // asked again on the next look (Suggest)
             return false;
         }
-        LOG("AutoAttack: to {},{}: through portals {} ({},{}) -> {}, {:.0f} tiles instead of {:.0f} on foot ({} hirelings)",
-            gtx, gty, plan.from, ftx, fty, plan.to, plan.through, plan.walk, g_hirelings.size());
+        LOG("AutoAttack: to {},{}: through portals {} ({},{}) -> {}, {:.0f} tiles ({:.0f} + {:.0f} walked) instead of {:.0f} on "
+            "foot{} ({} hirelings)", gtx, gty, plan.from, ftx, fty, plan.to, plan.through, toPortal, fromPortal, plan.walk,
+            walkNet > 0.0f ? " by the net" : " as the crow flies", g_hirelings.size());
         g_portalTrip.since = now;
         g_portalTrip.onTileSince = 0;
         Portals::arm(plan.from, plan.to);

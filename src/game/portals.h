@@ -28,7 +28,8 @@ namespace Portals
     };
     constexpr double kMinWalkTiles = 150.0, kMinSavedTiles = 100.0, kShare = 0.7, kBoxTiles = 20.0;
     // `skip`: portals not to use now (bit = id; a portal whose box did not come up lately).
-    bool plan(int hx, int hy, int gx, int gy, uint32_t skip, Plan& out);
+    // `walk`: the walk's length when known better than the straight line (the route net), else 0.
+    bool plan(int hx, int hy, int gx, int gy, uint32_t skip, double walk, Plan& out);
 
     // The nearest portal not joined yet within `radius` tiles of (hx, hy), -1 if none.
     int unjoinedNear(int hx, int hy, double radius, uint32_t skip);

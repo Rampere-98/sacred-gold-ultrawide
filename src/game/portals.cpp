@@ -1,6 +1,7 @@
 #include "game/portals.h"
 #include "game/teleports.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <windows.h>
@@ -36,10 +37,10 @@ uint32_t Portals::joined()
     return hero ? *reinterpret_cast<const uint32_t*>(hero + 0x578) & ((1u << kCount) - 1) : 0;
 }
 
-bool Portals::plan(int hx, int hy, int gx, int gy, uint32_t skip, Plan& out)
+bool Portals::plan(int hx, int hy, int gx, int gy, uint32_t skip, double walk, Plan& out)
 {
     out = Plan{};
-    out.walk = tiles(hx, hy, gx, gy);
+    out.walk = std::max(tiles(hx, hy, gx, gy), walk);
     if (out.walk < kMinWalkTiles)
     {
         return false;
