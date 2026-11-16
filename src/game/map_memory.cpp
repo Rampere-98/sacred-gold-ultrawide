@@ -1987,7 +1987,16 @@ bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, i
     // The lock only while the agent's own map is copied (the player, 2026-11-11: «ya empiezan a dar tirones»: the
     // world files read for the roads and the search over up to 1100x1100 tiles held it for seconds, and the frame's
     // drawing waited on it, 2-3 s without a frame).
+    // The map's lock is taken at the game's priority: the lengths worker and the wide route run at the lowest one, and
+    // with eight copies holding the processor such a thread, the lock in hand, waited minutes for its turn while the
+    // presenting thread waited on the lock (A8, 2026-11-16 14:13: 5.5 min frozen). Its own priority back once let go.
+    const int priorityWas = GetThreadPriority(GetCurrentThread());
+    if (priorityWas != THREAD_PRIORITY_ERROR_RETURN && priorityWas < THREAD_PRIORITY_NORMAL)
+    {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
+    }
     std::unique_lock lock(g_lock);
+    const DWORD lockedAt = GetTickCount();
     ensureLoaded();
     // Per tile, the step's cost: walked or walkable by the tile test 10, never seen 22 (may be anything), not
     // walkable or blocked again and again: no way.
@@ -2050,6 +2059,16 @@ bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, i
         }
     }
     lock.unlock();
+    if (priorityWas != THREAD_PRIORITY_ERROR_RETURN && priorityWas < THREAD_PRIORITY_NORMAL)
+    {
+        SetThreadPriority(GetCurrentThread(), priorityWas);
+    }
+    // Who held the map's lock, and for how long (the stuck solver, 2026-11-16: A8's presenting thread waited 5.5 min at
+    // the entry of a MapMemory function, SacredBild+66fc4 -> +66fe7, with the window's thread in a far plan).
+    if (const DWORD held = GetTickCount() - lockedAt; held > 300)
+    {
+        LOG("MapMemory: the route box {}x{} held the map {} ms", w, h, held);
+    }
     // Barred by the tile test alone within 12 tiles of a door that opens: a house's floor, tested with its door shut,
     // dear (40) but a way, so a route into it exists; a real wall there gets blocked on walking and closes then.
     for (size_t i = 0; i < step.size(); ++i)
@@ -2124,8 +2143,20 @@ bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, i
     cost[startCell] = 0;
     open.push({estimate(fromX, fromY), startCell});
     bool reached = false;
+    // A search that goes on over 30 s is given up (the stuck solver, 2026-11-16: far plans of 28-123 s in K1's lines on
+    // A2-A8 and the window's thread in one for good on A8 at 14:13, the presenting thread behind a lock for 5.5 min):
+    // «no route» for the caller, which then has its crude order and its clocks.
+    const DWORD searchStart = GetTickCount();
+    unsigned pops = 0;
     while (!open.empty())
     {
+        if ((++pops & 0x3FFF) == 0 && GetTickCount() - searchStart > 30000)
+        {
+            LOG("MapMemory: route {},{} to {},{} given up after {} s ({} steps, box {}x{})", fromX, fromY, toX, toY,
+                (GetTickCount() - searchStart) / 1000, pops, w, h);
+            out.clear();
+            return false;
+        }
         const auto [f, cell] = open.top();
         open.pop();
         const int x = x0 + cell % w, y = y0 + cell / w;
