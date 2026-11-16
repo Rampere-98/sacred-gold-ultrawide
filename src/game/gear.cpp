@@ -1498,7 +1498,12 @@ namespace
         {
             return -1;
         }
-        if (HeroProfile::rangedKind(kind))
+        // Five styles, one a slot (the player, 2026-11-16: «5 categorías que todos pueden usar, una por cada ranura»):
+        // 0 ranged (bow 7, crossbow 12, the dwarf's guns 13 and 14: Manolito, block BK, 0x54A2A0; throwing knives, 6,
+        // are melee there), 1 staff or spear (4), 2 two-handed (2, 3 or the game's own two-hand test), 3 one-handed
+        // (1, 6, the dark elf's blades 10), 4 dagger (5). The reach does not part them (block BK: the melee reach is the
+        // creature's, not the weapon's); the way of fighting does.
+        if (kind == 7 || kind == 12 || kind == 13 || kind == 14)
         {
             return 0;
         }
@@ -1506,13 +1511,42 @@ namespace
         {
             return 1;
         }
-        return kind == 2 || twoHanded(id) ? 2 : 3;
+        if (kind == 5)
+        {
+            return 4;
+        }
+        return kind == 2 || kind == 3 || twoHanded(id) ? 2 : 3;
     }
 
     const char* styleName(int st)
     {
-        static const char* const names[] = {"ranged", "staff/spear", "two-handed", "one-handed"};
-        return st >= 0 && st < 4 ? names[st] : "none";
+        static const char* const names[] = {"ranged", "staff/spear", "two-handed", "one-handed", "dagger"};
+        return st >= 0 && st < 5 ? names[st] : "none";
+    }
+
+    // A slot's element, five of them (the player, 2026-11-16: «5 categorías de elementos»): the game deals four kinds
+    // (physical, fire, magic, poison; lightning is magic), the one a weapon deals at least half its damage in; under
+    // half in each, 4 «mixed». -1: no damage.
+    int slotElement(uint32_t id)
+    {
+        float d[4] = {};
+        if (!damageOf(id, d))
+        {
+            return -1;
+        }
+        int best = 0;
+        float sum = d[0];
+        for (int k = 1; k < 4; ++k)
+        {
+            best = d[k] > d[best] ? k : best;
+            sum += d[k];
+        }
+        return d[best] * 2.0f >= sum ? best : 4;
+    }
+
+    const char* elementName(int k)
+    {
+        return k == 4 ? "mixed" : kindName(k);
     }
 
     // A slot's weapon: the hand that holds one (the weapon hand first; a shield is none).
@@ -1531,7 +1565,7 @@ namespace
 
     // The elements (the game's four damage kinds: physical, fire, magic, poison; lightning is magic in Sacred) the
     // open slots other than `except` hold, and their styles.
-    void slotsTaken(const uint8_t* pack, int open, int except, bool styles[4], bool elements[4])
+    void slotsTaken(const uint8_t* pack, int open, int except, bool styles[5], bool elements[5])
     {
         for (int slot = 0; slot < open; ++slot)
         {
@@ -1540,24 +1574,24 @@ namespace
             {
                 styles[st] = true;
             }
-            if (const int el = mainKind(w); el >= 0)
+            if (const int el = slotElement(w); el >= 0)
             {
                 elements[el] = true;
             }
         }
     }
 
-    std::string takenText(const bool styles[4], const bool elements[4])
+    std::string takenText(const bool styles[5], const bool elements[5])
     {
         std::string out;
-        for (int k = 0; k < 4; ++k)
+        for (int k = 0; k < 5; ++k)
         {
             out += styles[k] ? std::string(styleName(k)) + " " : "";
         }
         out += "/ ";
-        for (int k = 0; k < 4; ++k)
+        for (int k = 0; k < 5; ++k)
         {
-            out += elements[k] ? std::string(kindName(k)) + " " : "";
+            out += elements[k] ? std::string(elementName(k)) + " " : "";
         }
         return out;
     }
@@ -1613,7 +1647,7 @@ namespace
         float bestScore = 0.0f;
         int seen = 0;
         // No element another slot has (the player, 2026-11-16: no slot repeats another's style or element).
-        bool takenStyles[4] = {}, takenElements[4] = {};
+        bool takenStyles[5] = {}, takenElements[5] = {};
         slotsTaken(pack, open, empty >= 0 ? empty : (active == 0 ? 1 : 0), takenStyles, takenElements);
         eachItem(pack, [&](uint32_t id, int, int, int) {
             const uint32_t type = typeOf(id);
@@ -1621,7 +1655,7 @@ namespace
             {
                 return;
             }
-            if (const int el = mainKind(id); el >= 0 && takenElements[el])
+            if (const int el = slotElement(id); el >= 0 && takenElements[el])
             {
                 return;
             }
@@ -1720,7 +1754,7 @@ namespace
             if (slotItem(pack, empty, hand) == best)
             {
                 LOG("Gear: ranged weapon {:x} (kind {}) put in weapon slot {} of {}, hand {}: {}", best,
-                    HeroProfile::itemWeaponKind(best), empty + 1, open, hand, kindName(mainKind(best)));
+                    HeroProfile::itemWeaponKind(best), empty + 1, open, hand, elementName(slotElement(best)));
                 g_agentPut.insert(best);
                 return true;
             }
@@ -1925,7 +1959,7 @@ namespace
             {
                 const uint32_t wa = slotWeapon(pack, a), wb = slotWeapon(pack, b);
                 const bool sameStyle = wa && wb && styleOf(wa) == styleOf(wb);
-                const bool sameElement = wa && wb && mainKind(wa) >= 0 && mainKind(wa) == mainKind(wb);
+                const bool sameElement = wa && wb && slotElement(wa) >= 0 && slotElement(wa) == slotElement(wb);
                 if (!sameStyle && !sameElement)
                 {
                     continue;
@@ -1940,7 +1974,7 @@ namespace
                 targets.push_back({weak, std::format("repeats slot {}'s {} ({}{})", (weak == a ? b : a) + 1,
                                                      sameStyle ? "style" : "element",
                                                      sameStyle ? std::string(styleName(styleOf(wa))) + " " : "",
-                                                     sameElement ? kindName(mainKind(wa)) : "")});
+                                                     sameElement ? elementName(slotElement(wa)) : "")});
             }
         }
         if (targets.empty())
@@ -1949,7 +1983,7 @@ namespace
         }
         void* types = typeMgr();
         // Of the backpack's weapons with neither a style nor an element another slot has, the one worth most.
-        const auto distinct = [&](const bool styles[4], const bool elements[4], float& bestScore) {
+        const auto distinct = [&](const bool styles[5], const bool elements[5], float& bestScore) {
             uint32_t best = 0;
             eachItem(pack, [&](uint32_t id, int, int, int) {
                 const uint32_t type = typeOf(id);
@@ -1962,7 +1996,7 @@ namespace
                 {
                     return;
                 }
-                const int kind = mainKind(id), style = styleOf(id);
+                const int kind = slotElement(id), style = styleOf(id);
                 if (kind < 0 || style < 0 || styles[style] || elements[kind])
                 {
                     return;
@@ -1980,10 +2014,10 @@ namespace
         float bestScore = 0.0f;
         int empty = -1;
         std::string repeats;
-        bool takenStyles[4] = {}, takenElements[4] = {};
+        bool takenStyles[5] = {}, takenElements[5] = {};
         for (const Target& t : targets)
         {
-            bool styles[4] = {}, elements[4] = {};
+            bool styles[5] = {}, elements[5] = {};
             slotsTaken(pack, open, t.slot, styles, elements);
             float score = 0.0f;
             if (const uint32_t id = distinct(styles, elements, score))
@@ -1992,8 +2026,8 @@ namespace
                 bestScore = score;
                 empty = t.slot;
                 repeats = t.repeats;
-                std::copy(styles, styles + 4, takenStyles);
-                std::copy(elements, elements + 4, takenElements);
+                std::copy(styles, styles + 5, takenStyles);
+                std::copy(elements, elements + 5, takenElements);
                 break;
             }
         }
@@ -2025,7 +2059,7 @@ namespace
                 return false;
             }
             LOG("Gear: weapon slot {} {}: its weapons back to the backpack for {:x} ({}, {})", empty + 1, repeats,
-                best, styleName(styleOf(best)), kindName(mainKind(best)));
+                best, styleName(styleOf(best)), elementName(slotElement(best)));
         }
         // The hand the game holds it in (hand class 1: hand 0), then the game's test on it (4: the other one, a bow's;
         // A7, 2026-11-14), and only a free one. A weapon refused is left for 10 minutes, the slots not given up for it.
@@ -2060,7 +2094,7 @@ namespace
         }
         LOG("Gear: weapon {:x} put in weapon slot {} of {}: {}, {}, worth {:.0f} (the most damage of those that repeat no "
             "other slot's style or element; taken: {})", best, empty + 1, open, styleName(styleOf(best)),
-            kindName(mainKind(best)), bestScore, takenText(takenStyles, takenElements));
+            elementName(slotElement(best)), bestScore, takenText(takenStyles, takenElements));
         g_agentPut.insert(best);
         return true;
     }
