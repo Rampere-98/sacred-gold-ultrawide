@@ -98,8 +98,33 @@ namespace DDraw9::Gpu
                 LOG("Direct3D 9: {} not loaded ({})", narrow(path), GetLastError());
                 return nullptr;
             }
-            auto create = reinterpret_cast<CreateFn>(GetProcAddress(module, "Direct3DCreate9Ex"));
             d9::IDirect3D9Ex* d3d = nullptr;
+            // [DDraw] On12: Direct3D 9 on Direct3D 12 (d3d9on12.h: D3D9ON12_ARGS, Direct3DCreate9On12Ex), with
+            // Windows choosing the D3D12 device and queue; any failure falls back to the plain 9Ex below.
+            if (Config::ddraw.on12)
+            {
+                struct Args9On12
+                {
+                    BOOL enable9On12;
+                    IUnknown* d3d12Device;
+                    IUnknown* d3d12Queues[2];
+                    UINT numQueues;
+                    UINT nodeMask;
+                };
+                using Create9On12Fn = HRESULT(WINAPI*)(UINT, Args9On12*, UINT, d9::IDirect3D9Ex**);
+                auto create12 = reinterpret_cast<Create9On12Fn>(GetProcAddress(module, "Direct3DCreate9On12Ex"));
+                Args9On12 args{TRUE, nullptr, {nullptr, nullptr}, 0, 0};
+                const HRESULT hr12 = create12 ? create12(D3D_SDK_VERSION, &args, 1, &d3d) : E_NOINTERFACE;
+                if (SUCCEEDED(hr12) && d3d)
+                {
+                    LOG("Direct3D 9: using {} on Direct3D 12 (D3D9On12)", narrow(path));
+                    return d3d;
+                }
+                LOG("Direct3D 9: {}: {} ({:08x}): plain Direct3D 9Ex", narrow(path),
+                    create12 ? "Direct3DCreate9On12Ex failed" : "no Direct3DCreate9On12Ex", static_cast<uint32_t>(hr12));
+                d3d = nullptr;
+            }
+            auto create = reinterpret_cast<CreateFn>(GetProcAddress(module, "Direct3DCreate9Ex"));
             const HRESULT hr = create ? create(D3D_SDK_VERSION, &d3d) : E_NOINTERFACE;
             if (FAILED(hr) || !d3d)
             {

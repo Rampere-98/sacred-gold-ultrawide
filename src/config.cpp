@@ -89,6 +89,7 @@ void ConfigFile::load(const std::wstring& gameDir)
     Config::ddraw.d3d9 = _wcsicmp(readString(ini, L"DDraw", L"Backend", L"d3d9").c_str(), L"chain") != 0;
     Config::ddraw.chain = readString(ini, L"DDraw", L"Chain", Config::ddraw.chain);
     Config::ddraw.d3d9Path = readString(ini, L"DDraw", L"D3D9", L"");
+    Config::ddraw.on12 = readBool(ini, L"DDraw", L"On12", Config::ddraw.on12);
     Config::ddraw.mediaFoundation = Config::ddraw.d3d9 || readBool(ini, L"DDraw", L"MediaFoundation", Config::ddraw.mediaFoundation);
     Config::display.width = readInt(ini, L"Display", L"Width", Config::display.width);
     Config::display.height = readInt(ini, L"Display", L"Height", Config::display.height);
