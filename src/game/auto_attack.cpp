@@ -5446,25 +5446,28 @@ namespace
                     portalGiveUp(now, "its row clicked 20 s ago and the hero not at the other portal");
                     return false;
                 }
-                if (layer == 0 && std::hypot(htx - ftx, hty - fty) <= 2.0)
+                // The portal is a script zone of one tile that fires on stepping onto it (Manolito, block BM): a hero
+                // already on it (it arrived there by the portal, or a save) steps 4 tiles off after 6 s and back.
+                if (!g_portalTrip.onTileSince && layer == 0 && std::hypot(htx - ftx, hty - fty) <= 2.0)
                 {
-                    if (!g_portalTrip.onTileSince)
-                    {
-                        g_portalTrip.onTileSince = now;
-                        LOG("AutoAttack: portal {}: on its tile {},{} (the hero at {},{}), waiting for its box", from, ftx,
-                            fty, htx, hty);
-                    }
-                    else if (!clicked && now - g_portalTrip.onTileSince > 20000)
-                    {
-                        portalGiveUp(now, "no box in 20 s on its tile");
-                        return false;
-                    }
+                    g_portalTrip.onTileSince = now;
+                    LOG("AutoAttack: portal {}: on its tile {},{} (the hero at {},{}), waiting for its box", from, ftx, fty,
+                        htx, hty);
                 }
-                else
+                const DWORD waited = g_portalTrip.onTileSince ? now - g_portalTrip.onTileSince : 0;
+                if (!clicked && waited > 30000)
                 {
-                    g_portalTrip.onTileSince = 0;
+                    portalGiveUp(now, "no box in 30 s at its tile (stepped off and on once)");
+                    return false;
                 }
-                px = tileMiddle(ftx);
+                const bool stepOff = !clicked && waited > 6000 && waited < 12000;
+                static DWORD s_stepToldFor = 0;
+                if (stepOff && s_stepToldFor != g_portalTrip.onTileSince)
+                {
+                    s_stepToldFor = g_portalTrip.onTileSince;
+                    LOG("AutoAttack: portal {}: no box yet: stepping off its tile and back", from);
+                }
+                px = tileMiddle(ftx + (stepOff ? 4 : 0));
                 py = tileMiddle(fty);
                 return true;
             }

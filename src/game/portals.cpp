@@ -7,11 +7,12 @@
 
 namespace
 {
-    // The EE_USEPORTAL switch (ENG 0x6195F7, jump table 0x619B0C): portal id -> tile; ids 0..12 match the map's
-    // teleporter landmarks (class 1) live (docs/AGENT_ADDRESSES.md «Mapa», «Red de portales», block AE).
+    // Each portal's trigger: the script zone Wegpunkte_<zone> of one tile that calls Teleporter(id) when stepped onto
+    // (Manolito, block BM, docs/Sacred/Portales.tsv). The EE_USEPORTAL switch (ENG 0x6195F7) lands the hero on the
+    // same tile, but for 0 (lands on 3357,2459) and 12 (4625,2489).
     constexpr int kTiles[Portals::kCount][2] = {
-        {3357, 2459}, {2642, 3057}, {1343, 2239}, {2383, 4160}, {1393, 2832}, {1860, 3496}, {3500, 3590},
-        {2455, 2010}, {1395, 1508}, {3132, 2220}, {3291, 1397}, {4062, 2508}, {4625, 2489},
+        {3355, 2457}, {2642, 3057}, {1343, 2239}, {2383, 4160}, {1393, 2832}, {1860, 3496}, {3500, 3590},
+        {2455, 2010}, {1395, 1508}, {3132, 2220}, {3291, 1397}, {4062, 2508}, {4625, 2488},
     };
 
     std::atomic<int> g_from{-1}, g_to{-1};

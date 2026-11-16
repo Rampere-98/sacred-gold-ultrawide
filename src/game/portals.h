@@ -12,7 +12,7 @@ namespace Portals
 {
     constexpr int kCount = 13;  // surface portals 0..12
 
-    // The tile the portal sends the hero to (and where it stands), layer 0.
+    // The portal's trigger tile (stepped onto, it opens the box; the hero lands there too, within a tile), layer 0.
     void tile(int id, int& tx, int& ty);
     // The hero's joined portals (hero+0x578, bit id); 0 with no hero.
     uint32_t joined();
