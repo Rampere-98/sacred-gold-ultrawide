@@ -596,6 +596,7 @@ namespace
     {
         bool set = false;
         bool agent = false;         // composed by the agent (no bar the player made): «SlotNBy=agent» in the file
+        int weapons = 0;            // an agent's preset: the slot's weapons it was composed for (Gear::slotWeapons)
         uint8_t entries[cUI_Taskbar2::slotCount][kArtEntrySize] = {};
     };
     struct PresetState
@@ -607,7 +608,8 @@ namespace
         DWORD dirtyAt = 0;          // the file written 5 s after the last change
         DWORD restores[8] = {};
         int nextRestore = 0;
-        bool composed = false;      // the slots without a preset given one (once per hero)
+        DWORD composeAt = 0;        // the slots without a preset (or the agent's, their weapons changed) looked at
+        bool toldNoCompose = false;
     };
     PresetState g_presets;
     std::atomic<bool> g_presetsWorking{false};
@@ -665,6 +667,8 @@ namespace
             GetPrivateProfileStringW(section.c_str(), (L"Slot" + std::to_wstring(w + 1) + L"By").c_str(), L"", buf, 512,
                                      path.c_str());
             p.agent = std::wcscmp(buf, L"agent") == 0;
+            p.weapons = p.agent ? static_cast<int>(GetPrivateProfileIntW(section.c_str(),
+                                      (L"Slot" + std::to_wstring(w + 1) + L"Weapons").c_str(), 0, path.c_str())) : 0;
         }
     }
 
@@ -690,6 +694,8 @@ namespace
             // The agent's mark; a bar the player reworked loses it (nullptr: the key removed).
             WritePrivateProfileStringW(section.c_str(), (L"Slot" + std::to_wstring(w + 1) + L"By").c_str(),
                                        p.agent ? L"agent" : nullptr, path.c_str());
+            WritePrivateProfileStringW(section.c_str(), (L"Slot" + std::to_wstring(w + 1) + L"Weapons").c_str(),
+                                       p.agent ? std::to_wstring(p.weapons).c_str() : nullptr, path.c_str());
         }
     }
 
@@ -697,8 +703,17 @@ namespace
     // tácticas»): a bar of learned arts only, with a leaning by slot (the first one without a preset leans to the area
     // arts, the next to the single blows, and so on), a heal and a lasting effect in each. Data only: the bar changes
     // when the hero takes that weapon slot, as with the player's own presets. A slot with a preset is never touched.
-    void composePresets(int open, const std::vector<Tactics::ArtFact>& facts)
+    // `artSlots`: the art slots shown; `active`: the weapon slot in use (its bar is its preset already). False while
+    // the weapon slots are not known yet (looked at again later).
+    bool composePresets(int artSlots, int active, const std::vector<Tactics::ArtFact>& facts)
     {
+        // The weapon slots the level opens, and theirs weapons known (the reviewer, P2: not before, or the arrows and
+        // Recoil were left out for good).
+        const int weaponSlots = Gear::weaponSlotsOpen();
+        if (weaponSlots <= 0 || Gear::slotWeapons(0) == 0)
+        {
+            return false;
+        }
         using Use = Config::Tactics::Art;
         const auto of = [&](Use use) {
             std::vector<const Tactics::ArtFact*> list;
@@ -717,19 +732,30 @@ namespace
         // Two leanings are only worth it with arts of both kinds.
         if (area.empty() || single.empty())
         {
-            LOG("ArtPresets: no preset composed ({} area arts, {} single blows known)", area.size(), single.size());
-            return;
+            if (!g_presets.toldNoCompose)
+            {
+                g_presets.toldNoCompose = true;
+                LOG("ArtPresets: no preset composed ({} area arts, {} single blows known)", area.size(), single.size());
+            }
+            return true;
         }
+        const int open = artSlots;
         int lean = 0;
-        for (int w = 0; w < open && w < kPresetSlots; ++w)
+        for (int w = 0; w < weaponSlots && w < kPresetSlots; ++w)
         {
             Preset& p = g_presets.presets[w];
-            if (p.set)
+            const int weapons = Gear::slotWeapons(w);   // the arrows only with a bow, Recoil only two-handed
+            const bool leaning = !p.set || p.agent;
+            if (!leaning)
             {
                 continue;
             }
             const bool group = lean++ % 2 == 0;
-            const int weapons = Gear::slotWeapons(w);   // the arrows only with a bow, Recoil only two-handed
+            // A slot without a weapon, the one in use, or an agent's preset still made for these weapons: as it is.
+            if (!(weapons & 8) || w == active || (p.set && p.weapons == weapons))
+            {
+                continue;
+            }
             std::vector<const Tactics::ArtFact*> pick;
             const auto add = [&](const std::vector<const Tactics::ArtFact*>& from, size_t most) {
                 for (const Tactics::ArtFact* f : from)
@@ -762,10 +788,20 @@ namespace
             }
             p.set = true;
             p.agent = true;
+            p.weapons = weapons;
             g_presets.dirtyAt = GetTickCount() | 1;
-            LOG("ArtPresets: weapon slot {} given a preset leaning to {}: {}", w + 1,
-                group ? "groups (area arts)" : "single enemies (single blows)", names);
+            LOG("ArtPresets: weapon slot {} given a preset leaning to {} (weapons {:x}): {}", w + 1,
+                group ? "groups (area arts)" : "single enemies (single blows)", weapons, names);
         }
+        return true;
+    }
+
+    // The same art in an entry (its kind and id; the game's other fields left aside).
+    bool sameArt(const uint8_t* a, const uint8_t* b)
+    {
+        return *reinterpret_cast<const uint16_t*>(a) == *reinterpret_cast<const uint16_t*>(b) &&
+               (!*reinterpret_cast<const uint16_t*>(a) ||
+                *reinterpret_cast<const uint32_t*>(a + 4) == *reinterpret_cast<const uint32_t*>(b + 4));
     }
 
     void publishPresets()
@@ -826,15 +862,16 @@ namespace
         }
         auto snapshot = [&](int w) {
             Preset& p = g_presets.presets[w];
-            bool changed = !p.set;
+            bool changed = !p.set, otherArt = false;
             for (int slot = 0; slot < cUI_Taskbar2::slotCount; ++slot)
             {
                 changed = changed || std::memcmp(p.entries[slot], entry(slot), kArtEntrySize) != 0;
+                otherArt = otherArt || !sameArt(p.entries[slot], entry(slot));
                 std::memcpy(p.entries[slot], entry(slot), kArtEntrySize);
             }
-            if (changed && p.set)
+            if (otherArt && p.set)
             {
-                p.agent = false;    // the bar made over (the player's, or what the game put): no longer the agent's
+                p.agent = false;    // another art on the bar (the player's): no longer the agent's
             }
             p.set = true;
             if (changed)
@@ -949,13 +986,13 @@ namespace
         }
         // The same slot: whatever the bar holds now is its preset.
         snapshot(weapon);
-        if (!g_presets.composed && shown > 1)
+        if (shown > 1 && (!g_presets.composeAt || now - g_presets.composeAt > 10000))
         {
             std::vector<Tactics::ArtFact> facts;
             if (Tactics::artFacts(facts))
             {
-                g_presets.composed = true;
-                composePresets(shown, facts);
+                composePresets(shown, weapon, facts);   // not ready yet: looked at again in 10 s
+                g_presets.composeAt = now | 1;
             }
         }
         publishPresets();

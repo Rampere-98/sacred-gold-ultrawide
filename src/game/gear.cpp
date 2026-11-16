@@ -117,6 +117,8 @@ namespace
     // 1.5 s for 13 minutes, 368 times; one sold for 2 316 and bought back 6 s later for 11 242): an item taken off is
     // not put on again for 10 minutes, one sold is never bought back, one bought is not sold for an hour.
     std::unordered_map<uint32_t, DWORD> g_noPutOn, g_bought;
+    // The weapons the agent put in a weapon slot this run (the reviewer, P5: a slot the player made is never emptied).
+    std::unordered_set<uint32_t> g_agentPut;
     std::unordered_set<uint32_t> g_sold;
     bool merchantTakes(uint32_t type);
     int tabFor(uint32_t type);
@@ -1559,8 +1561,9 @@ namespace
             fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(empty), hand, best, 1);
             if (slotItem(pack, empty, hand) == best)
             {
-                LOG("Gear: ranged weapon {:x} (kind {}) put in weapon slot {} of {}, hand {}", best,
-                    HeroProfile::itemWeaponKind(best), empty + 1, open, hand);
+                LOG("Gear: ranged weapon {:x} (kind {}) put in weapon slot {} of {}, hand {}: {}", best,
+                    HeroProfile::itemWeaponKind(best), empty + 1, open, hand, kindName(mainKind(best)));
+                g_agentPut.insert(best);
                 return true;
             }
         }
@@ -1575,6 +1578,56 @@ namespace
         return false;
     }
 
+    // Whether item `id` lies in the backpack's grid.
+    bool inBackpack(uint8_t* pack, uint32_t id)
+    {
+        bool found = false;
+        eachItem(pack, [&](uint32_t item, int, int, int) { found = found || item == id; });
+        return found;
+    }
+
+    // A weapon slot's weapons back to the backpack, a hand at a time as the game's own drops (the reviewer, P1): each
+    // only once a cell is found for it, and put back in its hand if the backpack does not take it. True once the slot
+    // is empty; nothing is ever lost.
+    bool giveBack(uint8_t* pack, int slot)
+    {
+        const uint32_t old[2] = {slotItem(pack, slot, 0), slotItem(pack, slot, 1)};
+        for (uint32_t hand : {0u, 1u})
+        {
+            const uint32_t id = old[hand];
+            if (!id || (hand == 1 && id == old[0] && !slotItem(pack, slot, 1)))
+            {
+                continue;
+            }
+            int w = 0, h = 0;
+            uint16_t cell = 0;
+            if (!sizeOf(id, w, h) || !fn<FindFree>(g_findFree)(pack, nullptr, w, h, &cell, 0))
+            {
+                LOG("Gear: weapon slot {}: no room in the backpack for {:x}, the slot left as it is", slot + 1, id);
+                return false;
+            }
+            fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(slot), hand, 0, 1);
+            if (slotItem(pack, slot, hand))
+            {
+                LOG("Gear: weapon slot {} would not give {:x} back: the slots left alone", slot + 1, id);
+                g_slotsReady = false;
+                return false;
+            }
+            fn<PutItem>(g_putItem)(pack, nullptr, cell, id, w, h, 1);
+            if (!inBackpack(pack, id))
+            {
+                fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(slot), hand, id, 1);
+                LOG("Gear: the backpack did not take {:x} from weapon slot {}: back in its hand {} ({}); the slots left alone",
+                    id, slot + 1, hand, slotItem(pack, slot, hand) == id ? "done" : "NOT DONE");
+                g_slotsReady = false;
+                return false;
+            }
+            g_noPutOn[id] = GetTickCount();     // not put back on at once (equipOne, the slots): no back and forth
+            g_agentPut.erase(id);
+        }
+        return !slotItem(pack, slot, 0) && !slotItem(pack, slot, 1);
+    }
+
     bool fillWeaponSlot(cCreature* hero, uint8_t* pack)
     {
         if (!g_slotsReady)
@@ -1583,20 +1636,25 @@ namespace
         }
         const int open = slotsOpen(hero);
         const int active = *reinterpret_cast<const uint16_t*>(pack + kActiveSlot);
-        // The slot to fill: the first empty one not in use; else, of two that repeat a style or an element, the weaker
-        // one not in use (its weapons back to the backpack once a distinct one is found for it).
-        int empty = -1;
-        std::string repeats;
-        for (int slot = 0; slot < open && empty < 0; ++slot)
+        // The slots to fill, in order: the empty ones not in use; then, of two that repeat a style or an element, the
+        // weaker one not in use, if the agent filled it (the reviewer, P5: never a slot the player made). The first
+        // with a distinct weapon in the backpack is filled (P3: each one tried).
+        struct Target
+        {
+            int slot;
+            std::string repeats;
+        };
+        std::vector<Target> targets;
+        for (int slot = 0; slot < open; ++slot)
         {
             if (!slotItem(pack, slot, 0) && !slotItem(pack, slot, 1) && slot != active)
             {
-                empty = slot;
+                targets.push_back({slot, ""});
             }
         }
-        for (int a = 0; a < open && empty < 0; ++a)
+        for (int a = 0; a < open; ++a)
         {
-            for (int b = a + 1; b < open && empty < 0; ++b)
+            for (int b = a + 1; b < open; ++b)
             {
                 const uint32_t wa = slotWeapon(pack, a), wb = slotWeapon(pack, b);
                 const bool sameStyle = wa && wb && styleOf(wa) == styleOf(wb);
@@ -1607,95 +1665,97 @@ namespace
                 }
                 int weak = worth(wa).score < worth(wb).score ? a : b;
                 weak = weak == active ? (weak == a ? b : a) : weak;
-                if (weak == active)
+                if (weak == active || !g_agentPut.count(slotWeapon(pack, weak)) ||
+                    std::any_of(targets.begin(), targets.end(), [&](const Target& t) { return t.slot == weak; }))
                 {
                     continue;
                 }
-                empty = weak;
-                repeats = std::format("repeats slot {}'s {} ({} {})", (weak == a ? b : a) + 1,
-                                      sameStyle ? "style" : "element",
-                                      sameStyle ? styleName(styleOf(wa)) : "", sameElement ? kindName(mainKind(wa)) : "");
+                targets.push_back({weak, std::format("repeats slot {}'s {} ({}{})", (weak == a ? b : a) + 1,
+                                                     sameStyle ? "style" : "element",
+                                                     sameStyle ? std::string(styleName(styleOf(wa))) + " " : "",
+                                                     sameElement ? kindName(mainKind(wa)) : "")});
             }
         }
-        if (empty < 0)
+        if (targets.empty())
         {
             return false;
         }
-        bool takenStyles[4] = {}, takenElements[4] = {};
-        slotsTaken(pack, open, empty, takenStyles, takenElements);
         void* types = typeMgr();
+        // Of the backpack's weapons with neither a style nor an element another slot has, the one worth most.
+        const auto distinct = [&](const bool styles[4], const bool elements[4], float& bestScore) {
+            uint32_t best = 0;
+            eachItem(pack, [&](uint32_t id, int, int, int) {
+                const uint32_t type = typeOf(id);
+                if (const auto t = g_noPutOn.find(id); t != g_noPutOn.end() && GetTickCount() - t->second < 600000)
+                {
+                    return;
+                }
+                if ((flagsOf(id) & kQuestItem) || type == 0x1600 || type == 0x1601 || !types ||
+                    !fn<SlotAccepts>(g_slotAccepts)(types, nullptr, 13, type) || !fn<CanUse>(g_canUse)(hero, nullptr, id, 0))
+                {
+                    return;
+                }
+                const int kind = mainKind(id), style = styleOf(id);
+                if (kind < 0 || style < 0 || styles[style] || elements[kind])
+                {
+                    return;
+                }
+                const float score = worth(id).score;
+                if (!best || score > bestScore)
+                {
+                    best = id;
+                    bestScore = score;
+                }
+            });
+            return best;
+        };
         uint32_t best = 0;
         float bestScore = 0.0f;
-        eachItem(pack, [&](uint32_t id, int, int, int) {
-            const uint32_t type = typeOf(id);
-            if (const auto t = g_noPutOn.find(id); t != g_noPutOn.end() && GetTickCount() - t->second < 600000)
-            {
-                return;
-            }
-            if ((flagsOf(id) & kQuestItem) || type == 0x1600 || type == 0x1601 || !types ||
-                !fn<SlotAccepts>(g_slotAccepts)(types, nullptr, 13, type) || !fn<CanUse>(g_canUse)(hero, nullptr, id, 0))
-            {
-                return;
-            }
-            // Neither a style nor an element another slot has: of those, the most damage (the item's worth).
-            const int kind = mainKind(id), style = styleOf(id);
-            if (kind < 0 || style < 0 || takenStyles[style] || takenElements[kind])
-            {
-                return;
-            }
-            const float score = worth(id).score;
-            if (!best || score > bestScore)
+        int empty = -1;
+        std::string repeats;
+        bool takenStyles[4] = {}, takenElements[4] = {};
+        for (const Target& t : targets)
+        {
+            bool styles[4] = {}, elements[4] = {};
+            slotsTaken(pack, open, t.slot, styles, elements);
+            float score = 0.0f;
+            if (const uint32_t id = distinct(styles, elements, score))
             {
                 best = id;
                 bestScore = score;
+                empty = t.slot;
+                repeats = t.repeats;
+                std::copy(styles, styles + 4, takenStyles);
+                std::copy(elements, elements + 4, takenElements);
+                break;
             }
-        });
+        }
         if (!best)
         {
-            static DWORD s_toldAt[5] = {};
-            if (!s_toldAt[empty] || GetTickCount() - s_toldAt[empty] > 600000)
+            static DWORD s_toldAt = 0;
+            if (!s_toldAt || GetTickCount() - s_toldAt > 600000)
             {
-                s_toldAt[empty] = GetTickCount() | 1;
-                LOG("Gear: weapon slot {}: nothing distinct in the backpack{}{} (taken: {})", empty + 1,
-                    repeats.empty() ? "" : ", it ", repeats, takenText(takenStyles, takenElements));
+                s_toldAt = GetTickCount() | 1;
+                std::string which;
+                for (const Target& t : targets)
+                {
+                    which += std::format("{}{}{} ", t.slot + 1, t.repeats.empty() ? "" : " (", t.repeats.empty() ? "" : t.repeats + ")");
+                }
+                LOG("Gear: weapon slots {}: nothing distinct in the backpack, left as they are", which);
             }
+            return false;
+        }
+        if (!Act::allowed(Act::Kind::WeaponSlots, repeats.empty()
+                              ? "put a weapon of a style and an element no other slot has in an empty weapon slot"
+                              : "give back a weapon that repeats another slot's style or element, for a distinct one"))
+        {
             return false;
         }
         if (!repeats.empty())
         {
-            // The repeating slot's weapons back to the backpack, both hands, as the game's own drops; none lost.
-            uint32_t old[2] = {slotItem(pack, empty, 0), slotItem(pack, empty, 1)};
-            int sizes[2][2] = {};
-            uint16_t cell = 0;
-            for (int hand = 0; hand < 2; ++hand)
+            if (!giveBack(pack, empty))
             {
-                if (old[hand] && (!sizeOf(old[hand], sizes[hand][0], sizes[hand][1]) ||
-                                  !fn<FindFree>(g_findFree)(pack, nullptr, sizes[hand][0], sizes[hand][1], &cell, 0)))
-                {
-                    return false;   // no room for it
-                }
-            }
-            for (uint32_t hand : {0u, 1u})
-            {
-                if (old[hand])
-                {
-                    fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(empty), hand, 0, 1);
-                }
-            }
-            if (slotItem(pack, empty, 0) || slotItem(pack, empty, 1))
-            {
-                LOG("Gear: weapon slot {} would not give its weapons back: the slots left alone", empty + 1);
-                g_slotsReady = false;
                 return false;
-            }
-            for (int hand = 0; hand < 2; ++hand)
-            {
-                if (old[hand])
-                {
-                    uint16_t free = 0;
-                    fn<FindFree>(g_findFree)(pack, nullptr, sizes[hand][0], sizes[hand][1], &free, 0);
-                    fn<PutItem>(g_putItem)(pack, nullptr, free, old[hand], sizes[hand][0], sizes[hand][1], 1);
-                }
             }
             LOG("Gear: weapon slot {} {}: its weapons back to the backpack for {:x} ({}, {})", empty + 1, repeats,
                 best, styleName(styleOf(best)), kindName(mainKind(best)));
@@ -1734,6 +1794,7 @@ namespace
         LOG("Gear: weapon {:x} put in weapon slot {} of {}: {}, {}, worth {:.0f} (the most damage of those that repeat no "
             "other slot's style or element; taken: {})", best, empty + 1, open, styleName(styleOf(best)),
             kindName(mainKind(best)), bestScore, takenText(takenStyles, takenElements));
+        g_agentPut.insert(best);
         return true;
     }
 
@@ -3660,7 +3721,15 @@ int Gear::slotWeapons(int slot)
         return 0;
     }
     const uint32_t a = slotItem(pack, slot, 0), b = slotItem(pack, slot, 1);
-    return 1 | (slotRanged(pack, slot) ? 2 : 0) | ((a && twoHanded(a)) || (b && twoHanded(b)) ? 4 : 0);
+    return 1 | (slotRanged(pack, slot) ? 2 : 0) | ((a && twoHanded(a)) || (b && twoHanded(b)) ? 4 : 0) |
+           (slotWeapon(pack, slot) ? 8 : 0);
+}
+
+int Gear::weaponSlotsOpen()
+{
+    cObjectManager* objects = cObjectManager::instance();
+    cCreature* hero = objects ? objects->hero() : nullptr;
+    return g_ready && g_slotsReady && hero ? slotsOpen(hero) : 0;
 }
 
 int Gear::healingLeft()

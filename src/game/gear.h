@@ -67,8 +67,10 @@ namespace Gear
     // Call with the hero at rest (no art under way).
     bool chooseWeaponFor(uint32_t targetId);
     // Weapon slot `slot`'s weapons, for the arts that need a kind of weapon: bit 0 read, bit 1 a ranged weapon in it,
-    // bit 2 a two-handed one. 0: not known.
+    // bit 2 a two-handed one, bit 3 any weapon. 0: not known yet (the weapon slots not ready).
     int slotWeapons(int slot);
+    // The weapon slots the hero's level opens (1-5); 0 not known.
+    int weaponSlotsOpen();
     // Whether art `art` works with a slot's weapons (slotWeapons): the Wood Elf's arrows (1004-1008) only with a bow
     // or crossbow, the executors skip them otherwise without a word; Recoil and Vehemence (1083, 1084) only with a
     // two-handed weapon (Manolito, block BG, static: moveInfo+0x74 bits 1 and 2). The others with any.
