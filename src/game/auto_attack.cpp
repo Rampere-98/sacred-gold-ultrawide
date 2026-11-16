@@ -5525,7 +5525,7 @@ namespace
                 // The merchant already gone for keeps twice the reach: the walk's length (wayLength) rises and falls
                 // around the limit as the hero fights its way there, and the choice flipped quest/shop every 10-50 s
                 // (the stuck solver, 2026-11-16, A2: «off to merchant 85e (400 tiles)», six flips in 5 minutes).
-                const double shopReach = (Gear::healingLeft() >= 0 && Gear::healingLeft() <= 2 ? 700.0 : 150.0) *
+                const double shopReach = ((Gear::healingLeft() >= 0 && Gear::healingLeft() <= 2) || Gear::packFull() ? 700.0 : 150.0) *
                                          (m.id == g_shopId ? 2.0 : 1.0) * kTileSize;
                 if (m.layer == layer && d <= shopReach)
                 {
@@ -5668,7 +5668,7 @@ namespace
                     const double straight = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
                     const double byRoute = m.layer == layer && straight <= 1000.0 * kTileSize
                                                ? wayLength(self->x, self->y, m.x, m.y) : straight;
-                    const double reach = (Gear::healingLeft() >= 0 && Gear::healingLeft() <= 2 ? 700.0 : 150.0) *
+                    const double reach = ((Gear::healingLeft() >= 0 && Gear::healingLeft() <= 2) || Gear::packFull() ? 700.0 : 150.0) *
                                          (m.id == g_shopId ? 2.0 : 1.0);
                     LOG("AutoAttack: merchant {:x}: layer {} (hero {}), {:.0f} tiles straight, {:.0f} by the map's route, "
                         "reach {:.0f}, failed {}, useless {}", m.id, m.layer, layer, straight / kTileSize,
