@@ -45,5 +45,7 @@ put('AutoAttack', 'OwnPaths', '1')
 put('AutoAttack', 'Enabled', '1')
 put('AutoAttack', 'HumanCursor', '1')
 put('AgentSave', 'Enabled', '1')
+# Direct3D 9 on Direct3D 12 on every copy (the player, 2026-11-16: «pon DirectX 12 en todos»).
+put('DDraw', 'On12', '1')
 put('Mind', 'Path', rf'C:\Users\silas\projects\sacred-bild\docs\Agente\Mente-a{index}.md')
 open(path, 'w', encoding='utf-8').write(text)
