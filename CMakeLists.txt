@@ -77,6 +77,7 @@ set(DDRAW_SOURCES
   src/game/auto_start.cpp
   src/game/agent_save.cpp
   src/game/teleports.cpp
+  src/game/portals.cpp
   src/game/agent_overlay.cpp
   src/game/agent_cursor.cpp
   src/game/hero_build.cpp

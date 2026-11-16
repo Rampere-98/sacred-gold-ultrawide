@@ -204,23 +204,33 @@ bool Teleports::caveTriggerNear(int tx, int ty, int radius, int& ox, int& oy)
     return best < 1e17;
 }
 
-bool Teleports::heroAt(int& tx, int& ty, int& layer)
+uintptr_t Teleports::hero()
 {
     const uintptr_t om = *reinterpret_cast<const uintptr_t*>(0xAD5C40);
     const uintptr_t player = *reinterpret_cast<const uintptr_t*>(0x182EBE8);
     if (!om || !player || IsBadReadPtr(reinterpret_cast<const void*>(om), 8) ||
         IsBadReadPtr(reinterpret_cast<const void*>(player + 0x14), 4))
     {
-        return false;
+        return 0;
     }
     const uintptr_t table = *reinterpret_cast<const uintptr_t*>(om + 4);
     const uint32_t id = *reinterpret_cast<const uint32_t*>(player + 0x14);
     if (!table || IsBadReadPtr(reinterpret_cast<const void*>(table + 4 * id), 4))
     {
-        return false;
+        return 0;
     }
     const uintptr_t hero = *reinterpret_cast<const uintptr_t*>(table + 4 * id);
-    if (!hero || IsBadReadPtr(reinterpret_cast<const void*>(hero + 0x1C), 9))
+    if (!hero || IsBadReadPtr(reinterpret_cast<const void*>(hero), 0x57C))
+    {
+        return 0;
+    }
+    return hero;
+}
+
+bool Teleports::heroAt(int& tx, int& ty, int& layer)
+{
+    const uintptr_t hero = Teleports::hero();
+    if (!hero)
     {
         return false;
     }

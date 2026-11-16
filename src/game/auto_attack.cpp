@@ -7,6 +7,7 @@
 #include "game/auto_start.h"
 #include "game/agent_save.h"
 #include "game/teleports.h"
+#include "game/portals.h"
 #include "game/agent_cursor.h"
 #include "game/agent_overlay.h"
 #include "game/hero_build.h"
@@ -5224,7 +5225,7 @@ namespace
         return false;
     }
 
-    bool travel(DWORD now, const cCreature* self, int32_t x, int32_t y, DWORD& askAt)
+    bool travelTo(DWORD now, const cCreature* self, int32_t x, int32_t y, DWORD& askAt)
     {
         if (doorOnTheWay(now, self, x, y))
         {
@@ -5341,6 +5342,208 @@ namespace
             ClickWalk::walkTo(x, y, false);
         }
         return true;
+    }
+
+    // The game's portals on the way (Portals; the player, 2026-11-16: «todo lo que un jugador puede hacer está
+    // permitido, portales incluidos»; the agents walked 400+ tiles to quest 44). Before a long walk on the surface the
+    // agent weighs walking against walking to a joined portal, picking a joined one near the goal in its box and
+    // walking on from there, and takes the shorter. A portal not joined yet within 30 tiles is stepped onto on the way
+    // (its box opens and joins it; the watcher closes it). The pick in the box is a click on its row, by the watcher's
+    // thread (the box holds the game in its modal loop). Never a position written.
+    struct PortalTrip
+    {
+        uint64_t goal = ~0ull;      // the goal (in 4-tile squares) the choice was made for
+        DWORD since = 0;            // armed at
+        DWORD onTileSince = 0;      // on the portal's tile since (0: not)
+    };
+    PortalTrip g_portalTrip;
+    std::unordered_map<int, DWORD> g_portalLeftUntil;   // portal id -> not used again before this tick
+    std::unordered_map<int, DWORD> g_portalJoinTried;   // portal id -> stepped onto to join it at
+
+    uint32_t portalsLeft(DWORD now)
+    {
+        uint32_t skip = 0;
+        for (const auto& [id, until] : g_portalLeftUntil)
+        {
+            if (static_cast<int>(now - until) < 0)
+            {
+                skip |= 1u << id;
+            }
+        }
+        return skip;
+    }
+
+    void portalGiveUp(DWORD now, const char* why)
+    {
+        const int from = Portals::armedFrom(), to = Portals::armedTo();
+        if (from < 0)
+        {
+            return;
+        }
+        LOG("AutoAttack: portal {}{}: {}; portal {} left 30 min, on foot", from, to >= 0 ? std::format(" -> {}", to) : "",
+            why, from);
+        g_portalLeftUntil[from] = now + 1800000;
+        Portals::disarm();
+        g_portalTrip.onTileSince = 0;
+    }
+
+    int32_t tileMiddle(int t)
+    {
+        return static_cast<int32_t>((t + 0.5) * kTileSize);
+    }
+
+    // The tile to walk to instead of the goal while a portal is on the way: true with it in (px, py) (world).
+    bool portalLeg(DWORD now, const cCreature* self, int32_t x, int32_t y, int32_t& px, int32_t& py)
+    {
+        const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
+        const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
+        const int gtx = static_cast<int>(x / kTileSize), gty = static_cast<int>(y / kTileSize);
+        const uint64_t goal = (static_cast<uint64_t>(static_cast<uint32_t>(gtx / 4)) << 32) | static_cast<uint32_t>(gty / 4);
+        int ftx = 0, fty = 0;
+        if (const int from = Portals::armedFrom(); from >= 0)
+        {
+            const int to = Portals::armedTo();
+            Portals::tile(from, ftx, fty);
+            if (to >= 0)
+            {
+                int ttx, tty;
+                Portals::tile(to, ttx, tty);
+                if (layer == 0 && std::hypot(htx - ttx, hty - tty) < 30.0)
+                {
+                    LOG("AutoAttack: portal {} -> {}: arrived at {},{} ({:.0f} s), {:.0f} tiles on to the goal {},{}", from,
+                        to, htx, hty, (now - g_portalTrip.since) / 1000.0, std::hypot(htx - gtx, hty - gty), gtx, gty);
+                    remember("viaja por un portal");
+                    ClickWalk::cancel();
+                    Portals::disarm();
+                    g_portalTrip.onTileSince = 0;
+                    return false;
+                }
+                if (goal != g_portalTrip.goal)
+                {
+                    LOG("AutoAttack: portal {} -> {}: dropped, the goal is now {},{}", from, to, gtx, gty);
+                    Portals::disarm();
+                    g_portalTrip.onTileSince = 0;
+                }
+            }
+            else if (Portals::joined() & (1u << from))
+            {
+                LOG("AutoAttack: portal {} joined at {},{} (the hero's portals {:x})", from, htx, hty, Portals::joined());
+                remember("activa un portal");
+                Portals::disarm();
+                g_portalTrip.onTileSince = 0;
+            }
+            if (Portals::armedFrom() >= 0)
+            {
+                const DWORD clicked = Portals::clickedAt();
+                if (now - g_portalTrip.since > 600000)
+                {
+                    portalGiveUp(now, "not there in 10 min");
+                    return false;
+                }
+                if (clicked && now - clicked > 20000)
+                {
+                    portalGiveUp(now, "its row clicked 20 s ago and the hero not at the other portal");
+                    return false;
+                }
+                if (layer == 0 && std::hypot(htx - ftx, hty - fty) <= 2.0)
+                {
+                    if (!g_portalTrip.onTileSince)
+                    {
+                        g_portalTrip.onTileSince = now;
+                        LOG("AutoAttack: portal {}: on its tile {},{} (the hero at {},{}), waiting for its box", from, ftx,
+                            fty, htx, hty);
+                    }
+                    else if (!clicked && now - g_portalTrip.onTileSince > 20000)
+                    {
+                        portalGiveUp(now, "no box in 20 s on its tile");
+                        return false;
+                    }
+                }
+                else
+                {
+                    g_portalTrip.onTileSince = 0;
+                }
+                px = tileMiddle(ftx);
+                py = tileMiddle(fty);
+                return true;
+            }
+        }
+        if (layer != 0 || !Act::may(Act::Kind::Portals) || !Act::may(Act::Kind::Windows))
+        {
+            return false;
+        }
+        const uint32_t skip = portalsLeft(now);
+        // A portal not joined yet near the way: stepped onto (once in 20 min each).
+        uint32_t tried = skip;
+        for (const auto& [id, at] : g_portalJoinTried)
+        {
+            if (now - at < 1200000)
+            {
+                tried |= 1u << id;
+            }
+        }
+        if (const int near = Portals::unjoinedNear(htx, hty, 30.0, tried); near >= 0)
+        {
+            Portals::tile(near, ftx, fty);
+            g_portalJoinTried[near] = now;
+            if (Act::allowed(Act::Kind::Portals, "step onto a portal nearby to join it"))
+            {
+                LOG("AutoAttack: portal {} at {},{} ({:.0f} tiles) not joined yet (the hero's portals {:x}): stepping onto it",
+                    near, ftx, fty, std::hypot(htx - ftx, hty - fty), Portals::joined());
+                g_portalTrip.since = now;
+                g_portalTrip.onTileSince = 0;
+                Portals::arm(near, -1);
+                px = tileMiddle(ftx);
+                py = tileMiddle(fty);
+                return true;
+            }
+        }
+        if (goal == g_portalTrip.goal)
+        {
+            return false;   // decided for this goal already: on foot
+        }
+        g_portalTrip.goal = goal;
+        Portals::Plan plan;
+        const bool through = Portals::plan(htx, hty, gtx, gty, skip, plan);
+        if (plan.walk < Portals::kMinWalkTiles)
+        {
+            return false;
+        }
+        if (!through)
+        {
+            LOG("AutoAttack: to {},{}: on foot, {:.0f} tiles (through portals {:.0f}{}; the hero's portals {:x})", gtx, gty,
+                plan.walk, plan.through, plan.from >= 0 ? std::format(", {} -> {}", plan.from, plan.to) : "",
+                Portals::joined());
+            return false;
+        }
+        if (!Act::allowed(Act::Kind::Portals, "take a portal: shorter than the walk"))
+        {
+            g_portalTrip.goal = ~0ull;  // asked again on the next look (Suggest)
+            return false;
+        }
+        Portals::tile(plan.from, ftx, fty);
+        LOG("AutoAttack: to {},{}: through portals {} ({},{}) -> {}, {:.0f} tiles instead of {:.0f} on foot", gtx, gty,
+            plan.from, ftx, fty, plan.to, plan.through, plan.walk);
+        g_portalTrip.since = now;
+        g_portalTrip.onTileSince = 0;
+        Portals::arm(plan.from, plan.to);
+        px = tileMiddle(ftx);
+        py = tileMiddle(fty);
+        return true;
+    }
+
+    bool travel(DWORD now, const cCreature* self, int32_t x, int32_t y, DWORD& askAt)
+    {
+        int32_t px, py;
+        if (portalLeg(now, self, x, y, px, py))
+        {
+            if (travelTo(now, self, px, py, askAt))
+            {
+                return true;
+            }
+            portalGiveUp(now, "no way to it");
+        }
+        return travelTo(now, self, x, y, askAt);
     }
 
     // The stuck guard (the player's wish, 2026-11-09: no stall ever): out of the fights, a hero that has not got
@@ -8254,6 +8457,31 @@ namespace
         }
     }
 
+    // The box read from the watcher's thread, guarded as escapeMenuVisible.
+    unsigned portalBoxRows()
+    {
+        __try
+        {
+            return UiNav::portalBoxMask();
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return 0;
+        }
+    }
+
+    bool portalRowPoint(int portal, float& x, float& y)
+    {
+        __try
+        {
+            return UiNav::portalRow(portal, x, y);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
     void watchPortalBox()
     {
         DWORD since = 0, toldAt = 0, menuSince = 0, menuToldAt = 0;
@@ -8272,16 +8500,47 @@ namespace
                 continue;
             }
             const DWORD now = GetTickCount();
+            const unsigned rows = portalBoxRows();
             if (!since)
             {
                 since = now;
+                LOG("AutoAttack: the portal box is open (rows {:x}, the hero's portals {:x}, trip {} -> {})", rows,
+                    Portals::joined(), Portals::armedFrom(), Portals::armedTo());
+                continue;
             }
-            else if (now - since > 1500 && now - toldAt > 2000)
+            // A portal trip: its destination's row clicked once the box has drawn (the row's text placed), as the
+            // player clicks it. The box closes and the game sends the hero there.
+            const int to = Portals::armedTo();
+            const DWORD clicked = Portals::clickedAt();
+            if (to >= 0 && !clicked && now - since > 700)
+            {
+                float cx = 0.0f, cy = 0.0f;
+                if ((rows & (1u << to)) && portalRowPoint(to, cx, cy) &&
+                    Act::allowed(Act::Kind::Portals, "pick the destination in the portal box"))
+                {
+                    LOG("AutoAttack: portal box: the row of portal {} clicked at {:.0f},{:.0f} (rows {:x})", to, cx, cy, rows);
+                    Portals::clicked(now);
+                    Controller::clickAt(static_cast<int>(cx), static_cast<int>(cy));
+                    toldAt = now;
+                    continue;
+                }
+                if (now - toldAt > 2000)
+                {
+                    LOG("AutoAttack: portal box: portal {} cannot be picked (rows {:x}){}", to, rows,
+                        rows & (1u << to) ? ", its row not placed" : ", not joined");
+                }
+            }
+            if (clicked && now - clicked < 3000)
+            {
+                continue;   // the click's turn first
+            }
+            if (now - since > 1500 && now - toldAt > 2000)
             {
                 toldAt = now;
                 if (Act::allowed(Act::Kind::Windows, "close the portal box opened under the agent"))
                 {
-                    LOG("AutoAttack: the portal box opened under the agent (a portal stepped on): closed");
+                    LOG("AutoAttack: the portal box opened under the agent (rows {:x}, the hero's portals {:x}): closed",
+                        rows, Portals::joined());
                     Inject::key(VK_ESCAPE, true);
                     Inject::key(VK_ESCAPE, false);
                 }

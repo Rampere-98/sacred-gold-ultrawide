@@ -33,6 +33,8 @@ namespace Teleports
     // World units per tile (the hero's x and y at +0x1C/+0x20, its layer at +0x24).
     constexpr double kWorldPerTile = 53.66563;
 
+    // The controlled hero's object (readable up to +0x57C: its portal mask at +0x578), 0 with none.
+    uintptr_t hero();
     // The controlled hero's tile and layer; false with no hero.
     bool heroAt(int& tx, int& ty, int& layer);
 

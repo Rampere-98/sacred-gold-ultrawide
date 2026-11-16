@@ -48,6 +48,7 @@ namespace
         {"Retreat", "Retirarse y esquivar"},
         {"Storage", "Almacén (guardar y sacar equipo por zona)"},
         {"SortInventory", "Ordenar inventario (la flecha de la mochila)"},
+        {"Portals", "Portales (activarlos y viajar por ellos)"},
     };
 
     std::atomic<unsigned char> g_mode[kCount] = {};

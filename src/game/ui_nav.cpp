@@ -210,6 +210,7 @@ namespace
         UiNav::Rect rect;   // the control's, screen pixels
         cUI_Control2* control = nullptr;
         UiCanvas::Frame frame{};
+        int portal = -1;    // a portal box row: its portal id
     };
 
     float physicalX(float x, const UiCanvas::Frame& frame)
@@ -711,6 +712,7 @@ namespace
             }
             Point p = screen(left + width * 0.5f, top + h * 0.5f, frame);
             p.rect = screenRect(left, top, width, h, frame);
+            p.portal = portal;
             out.push_back(p);
         }
     }
@@ -1097,6 +1099,33 @@ bool UiNav::portalBoxOpen()
 {
     auto* box = static_cast<cUI_BusyDlg*>(messageBox());
     return box && (box->mode == cUI_BusyDlg::surfacePortals || box->mode == cUI_BusyDlg::underworldPortals);
+}
+
+bool UiNav::portalRow(int portal, float& outX, float& outY)
+{
+    auto* box = static_cast<cUI_BusyDlg*>(messageBox());
+    if (!box || box->mode != cUI_BusyDlg::surfacePortals)
+    {
+        return false;
+    }
+    std::vector<Point> rows;
+    addPortals(box, frameOf(box), rows);
+    for (const Point& p : rows)
+    {
+        if (p.portal == portal)
+        {
+            outX = std::round(p.x);
+            outY = std::round(p.y);
+            return true;
+        }
+    }
+    return false;
+}
+
+unsigned int UiNav::portalBoxMask()
+{
+    auto* box = static_cast<cUI_BusyDlg*>(messageBox());
+    return box && (box->mode == cUI_BusyDlg::surfacePortals || box->mode == cUI_BusyDlg::underworldPortals) ? box->portals : 0;
 }
 
 bool UiNav::npcAnswer(int index, float& outX, float& outY)

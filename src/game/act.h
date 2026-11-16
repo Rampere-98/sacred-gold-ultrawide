@@ -38,6 +38,7 @@ namespace Act
         Retreat,        // stepping back, dodging, fleeing
         Storage,        // the town's storage chest: pieces for other zones put in and taken out
         SortInventory,  // the inventory window's sort arrow
+        Portals,        // the game's portals: stepping on one to join it, picking a destination in its box
         Count
     };
 
