@@ -51,5 +51,6 @@ put('DDraw', 'On12', '1')
 # The player's folder gets none of this: there every kind starts at No.
 put('Permisos', 'Storage', '2')
 put('Permisos', 'SortInventory', '2')
+put('Permisos', 'Portals', '2')
 put('Mind', 'Path', rf'C:\Users\silas\projects\sacred-bild\docs\Agente\Mente-a{index}.md')
 open(path, 'w', encoding='utf-8').write(text)
