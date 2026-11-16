@@ -546,15 +546,35 @@ namespace
         return byShelves >= 0 ? byShelves : kind;
     }
 
+    // Why each thing of the last pass was not sold, for the trip's closing line (the stuck solver, 2026-11-16: A7's
+    // backpack stayed full through 15 trips, «nothing more to sell», and the log did not say with what).
+    // 0 quest item, 1 taken off lately, 2 for the smith, 3 rune, 4 an upgrade, 5 healing potion kept, 6 usable and not
+    // worn (gems, scrolls...), 7 set piece, 8 no tab, 9 bought lately, 10 not allowed, 11 the merchant's tab is full.
+    int g_sellWhy[12] = {};
+    int g_sellSeen = 0, g_sellPotions = 0;
+    bool healingType(uint32_t type);    // defined below
+
     bool sellOne(cCreature* hero, uint8_t* pack)
     {
         void* inv = inventory();
         bool done = false;
         const DWORD now = GetTickCount();
+        std::fill(std::begin(g_sellWhy), std::end(g_sellWhy), 0);
+        g_sellSeen = 0;
+        g_sellPotions = 0;
+        // With gold to spare (over 500 000: the laboratory's endless gold) the healing potions beyond twice the stock are
+        // sold too. The runes are never sold (the player, 2026-11-09): the combo master takes them.
+        const bool rich = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold) >= 500000;
         std::erase_if(g_takenOff, [now](const auto& e) { return now - e.second > 60000; });
         eachItem(pack, [&](uint32_t id, int cell, int w, int h) {
-            if (done || (flagsOf(id) & kQuestItem))
+            if (done)
             {
+                return;
+            }
+            ++g_sellSeen;
+            if (flagsOf(id) & kQuestItem)
+            {
+                ++g_sellWhy[0];
                 return;
             }
             // Not one taken off moments ago: its model is still queued for release on the drawing thread, and
@@ -562,6 +582,7 @@ namespace
             // a C++ exception on the drawing thread 2 s after).
             if (const auto t = g_takenOff.find(id); t != g_takenOff.end() && now - t->second < 15000)
             {
+                ++g_sellWhy[1];
                 return;
             }
             // Not the item on its way to the smith (the live verifier, 2026-11-10: «589 has 1 free sockets … off to
@@ -569,6 +590,7 @@ namespace
             // Nor the gems and runes it is to take (the code reviewer).
             if (id == g_socketBase.load() || (g_socketBase.load() && socketable(id)))
             {
+                ++g_sellWhy[2];
                 return;
             }
             // Runes are never sold (the player, 2026-11-09): another class's rune is traded at the combo master for one
@@ -579,6 +601,7 @@ namespace
                 const auto* o = reinterpret_cast<const uint8_t*>(objects->object(id));
                 if (o && *reinterpret_cast<const uintptr_t*>(o) == kRuneVtable)
                 {
+                    ++g_sellWhy[3];
                     return;
                 }
             }
@@ -590,23 +613,35 @@ namespace
             const int slot = classOk ? bestSlot(hero, id, 0.05f, nullptr, &fits) : -1;
             if (classOk && (!fits || slot >= 0))
             {
-                return;     // potions, runes, gems...; or an upgrade (perhaps once the hero is stronger)
+                // Potions, runes, gems...; or an upgrade (perhaps once the hero is stronger). Rich: the healing potions
+                // beyond twice the stock go.
+                const bool potion = healingType(typeOf(id));
+                const bool surplusPotion = rich && !fits && potion && ++g_sellPotions > 2 * Mind::now().potionStock;
+                if (!surplusPotion)
+                {
+                    ++g_sellWhy[fits ? 4 : potion ? 5 : 6];
+                    return;
+                }
             }
             if (const int set = worth(id).set; set >= 0 && setsWorn(hero).count(set))
             {
+                ++g_sellWhy[7];
                 return;     // a piece of a set the hero wears: kept for the set
             }
             const int tab = tabFor(typeOf(id));
             if (tab < 0)
             {
+                ++g_sellWhy[8];
                 return;
             }
             if (const auto b = g_bought.find(id); b != g_bought.end() && now - b->second < 600000)
             {
+                ++g_sellWhy[9];
                 return;     // bought within the hour: not sold back at a loss
             }
             if (!Act::allowed(Act::Kind::Sell, "sell what the hero does not use"))
             {
+                ++g_sellWhy[10];
                 return;
             }
             // On its own tab only; with no room there it is not sold (a player could not either).
@@ -628,6 +663,7 @@ namespace
                 done = true;
                 return;
             }
+            ++g_sellWhy[11];
         });
         (void)hero;
         return done;
@@ -2082,6 +2118,13 @@ namespace
             }
         }
         // Nothing more to swap: whatever is in the slots back to the backpack, the window closed.
+        // What decided it (the stuck solver, 2026-11-16: A7 «0 done, 38 left» at every visit since 14-11 15:50 with ~912 000
+        // gold, 3.7 s after the window opened, no «into the swap's slot» line, while A8 swapped at 09:18 the same build).
+        LOG("Gear: rune swap not made: slots filled {}, target {}, runes of other classes {}, gold {}, price 3 {} 4 {}, "
+            "4:1 pick {:x} (no41 {}/{}), active page {}, result {:x}, swapCrashes {}",
+            filled, target, foreign, gold, price3, price4, s_pick.type, s_no41, g_no41Run,
+            *reinterpret_cast<const uint16_t*>(tab + 0x84), *reinterpret_cast<const uint32_t*>(lotto + kResult + 4),
+            swapCrashes());
         LOG("Gear: rune swaps over ({} done, {} runes of other classes left): closing the master's window", g_swapsDone,
             countForeignRunes(hero, pack));
         fn<UiShow>((*reinterpret_cast<uintptr_t* const*>(lotto))[0x24 / 4])(lotto, nullptr, 0);
@@ -2972,6 +3015,14 @@ namespace
             if (trip && g_idleWorks >= 2)
             {
                 LOG("Gear: merchant trip done (backpack {})", g_full ? "still full: nothing more to sell" : "has room");
+                if (g_full)
+                {
+                    LOG("Gear: not sold, of {} things: quest {}, taken off {}, for the smith {}, runes {}, upgrades {}, healing "
+                        "potions {}, usable not worn {}, set pieces {}, no tab {}, bought lately {}, not allowed {}, the "
+                        "merchant's tab full {}",
+                        g_sellSeen, g_sellWhy[0], g_sellWhy[1], g_sellWhy[2], g_sellWhy[3], g_sellWhy[4], g_sellWhy[5],
+                        g_sellWhy[6], g_sellWhy[7], g_sellWhy[8], g_sellWhy[9], g_sellWhy[10], g_sellWhy[11]);
+                }
                 g_tripDone = true;
                 // Still full: this merchant does not deal in what the hero carries (a weapon shop and a backpack of
                 // armour; the player, 2026-11-14: «tienen acúmulo de mierda»). Told to the agent, who leaves this
