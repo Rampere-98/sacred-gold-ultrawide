@@ -221,6 +221,8 @@ namespace
     // does not move (no way inside the grid: around a river) does the walk get a route.
     bool g_native = false;
 
+    bool agentOrder();
+
     // A* with 8 neighbours (no corner cutting) from the hero's tile to the goal's, or to the nearest walkable tile
     // around it. Fills g_route.cells.
     bool planUnguarded(Cell start, Cell goal)
@@ -280,7 +282,9 @@ namespace
         {
             // A click on a wall, a tree or water: the nearest tile around it one can stand on.
             bool found = false;
-            for (int r = 1; r <= (partial ? 12 : 4) && !found; ++r)
+            // 8 for the agent's own orders (the quests' session, 2026-11-16, docs/Misiones-tope-40.md A.2: Baron
+            // DeMordrey at 1676,2352 inside his keep, its east door 5-6 tiles off; at 4 «NO plan in 0 ms»).
+            for (int r = 1; r <= (partial ? 12 : agentOrder() ? 8 : 4) && !found; ++r)
             {
                 int bestD = INT_MAX;
                 Cell best{};
@@ -547,6 +551,11 @@ namespace
     bool g_asking = false;                      // the order going out is one asked for on the agent's map
     std::atomic<bool> g_fromMap{false};         // the far walk is one asked for on the agent's map
     std::atomic<bool> g_askByPlayer{true};      // a click of the player's on the map (not the agent's own travel)
+
+    bool agentOrder()
+    {
+        return g_asking && !g_askByPlayer;
+    }
     int32_t g_goalX = 0, g_goalY = 0;           // where the player clicked
     int32_t g_lastX = 0, g_lastY = 0;           // the hero at the last check
     int32_t g_legX = 0, g_legY = 0;             // the hero when the current leg went out
