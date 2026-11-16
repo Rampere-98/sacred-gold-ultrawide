@@ -526,8 +526,14 @@ namespace
 
     // The slot `id` would best go to, and what is there now; -1 if it is better nowhere. Of the rings and amulets,
     // the weakest worn.
+    bool ownClassOnly(cCreature* hero, uint32_t id);
+
     int bestSlot(cCreature* hero, uint32_t id, float margin, uint32_t* replaced = nullptr, bool* fits = nullptr)
     {
+        // The hero's class's own first, in every piece of the equipment (the player, 2026-11-16: option 2 for the
+        // weapon slots, then «no te olvides de ningún equipamiento»): one of its own replaces a common one whatever
+        // they score; a common one never replaces one of its own; between two alike, the score as ever.
+        const bool own = ownClassOnly(hero, id);
         const uint32_t type = typeOf(id);
         void* types = typeMgr();
         if (!type || !types)
@@ -554,7 +560,13 @@ namespace
             {
                 continue;
             }
-            if (!better(w, current, margin, worn))
+            const bool currentOwn = current && ownClassOnly(hero, current);
+            if (currentOwn && !own)
+            {
+                continue;
+            }
+            const bool ownOverCommon = own && current && !currentOwn;
+            if (!ownOverCommon && !better(w, current, margin, worn))
             {
                 continue;
             }
@@ -576,9 +588,10 @@ namespace
                 }
             }
             const Worth now = current ? worth(current) : Worth{};
-            const float gain = current ? (scoreWith(w, worn, false) - scoreWith(now, worn, true)) +
-                                             (w.value - now.value) * 0.01f
-                                       : 1e9f;
+            const float gain = !current        ? 1e9f
+                               : ownOverCommon ? 1e8f + scoreWith(w, worn, false)
+                                               : (scoreWith(w, worn, false) - scoreWith(now, worn, true)) +
+                                                     (w.value - now.value) * 0.01f;
             if (best < 0 || gain > bestGain)
             {
                 best = slot;
