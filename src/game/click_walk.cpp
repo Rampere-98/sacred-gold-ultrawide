@@ -385,17 +385,12 @@ namespace
             // south, which runs out of the grid 11 tiles short and out of the narrow route box): the wide route, and
             // the walk as far along it as the grid reaches, a shut gate on it ending the stretch before it.
             static bool s_inFallback = false;
-            // A wide search is a big one: once per goal every 15 s, not every frame the grid has no way.
-            static DWORD s_wideAt = 0;
-            static Cell s_wideGoal{-1, -1};
-            const DWORD wideNow = GetTickCount();
-            const bool wideDue = !(s_wideGoal.x == goal.x && s_wideGoal.y == goal.y && wideNow - s_wideAt < 15000);
-            if (!partial && !s_inFallback && wideDue)
+            // A wide search is a big one: on its own low thread (A2 froze 39.6 s with it here), its route taken
+            // once ready.
+            if (!partial && !s_inFallback)
             {
-                s_wideAt = wideNow;
-                s_wideGoal = goal;
                 std::vector<std::pair<int, int>> wide;
-                if (MapMemory::routeWide(g_grid.layer, start.x, start.y, goal.x, goal.y, wide))
+                if (MapMemory::routeWideAsync(g_grid.layer, start.x, start.y, goal.x, goal.y, wide))
                 {
                     Cell stop = start;
                     for (const auto& [x, y] : wide)

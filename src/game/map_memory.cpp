@@ -1870,6 +1870,49 @@ bool MapMemory::routeWide(int layer, int fromX, int fromY, int toX, int toY, std
     return routeWithin(layer, fromX, fromY, toX, toY, 120, out) || routeWithin(layer, fromX, fromY, toX, toY, 240, out);
 }
 
+namespace
+{
+    struct WideRoute
+    {
+        int layer = -1, fromX = 0, fromY = 0, toX = 0, toY = 0;
+        DWORD at = 0;
+        bool ok = false;
+        std::vector<std::pair<int, int>> cells;
+    };
+    std::mutex g_wideLock;
+    WideRoute g_wide;
+    bool g_wideBusy = false;
+}
+
+bool MapMemory::routeWideAsync(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out)
+{
+    const std::lock_guard lock(g_wideLock);
+    if (g_wide.layer == layer && std::abs(g_wide.toX - toX) <= 4 && std::abs(g_wide.toY - toY) <= 4 &&
+        std::abs(g_wide.fromX - fromX) <= 12 && std::abs(g_wide.fromY - fromY) <= 12 && GetTickCount() - g_wide.at < 60000)
+    {
+        if (!g_wide.ok)
+        {
+            return false;
+        }
+        out = g_wide.cells;
+        return true;
+    }
+    if (!g_wideBusy)
+    {
+        g_wideBusy = true;
+        std::thread([=] {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+            WideRoute r{layer, fromX, fromY, toX, toY, 0, false, {}};
+            r.ok = MapMemory::routeWide(layer, fromX, fromY, toX, toY, r.cells);
+            r.at = GetTickCount();
+            const std::lock_guard done(g_wideLock);
+            g_wide = std::move(r);
+            g_wideBusy = false;
+        }).detach();
+    }
+    return false;
+}
+
 bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, int kMargin,
                             std::vector<std::pair<int, int>>& out)
 {
