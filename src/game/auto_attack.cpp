@@ -5360,7 +5360,22 @@ namespace
     };
     PortalTrip g_portalTrip;
     std::unordered_map<int, DWORD> g_portalLeftUntil;   // portal id -> not used again before this tick
-    uint32_t g_portalJoinTried = 0;     // portals gone out of the way for to join them, once each a game (bit = id)
+    // Times each portal was gone out of the way for to join it, this game: two at most (the coordinator, 2026-11-16:
+    // a try that failed is left 30 min, then may be made once more).
+    uint8_t g_portalJoinTries[Portals::kCount] = {};
+
+    uint32_t portalsTriedOut()
+    {
+        uint32_t mask = 0;
+        for (int id = 0; id < Portals::kCount; ++id)
+        {
+            if (g_portalJoinTries[id] >= 2)
+            {
+                mask |= 1u << id;
+            }
+        }
+        return mask;
+    }
     uintptr_t g_portalJoinHero = 0;     // ... for this hero object (another: a game loaded, all may be tried again)
 
     uint32_t portalsLeft(DWORD now)
@@ -5443,7 +5458,10 @@ namespace
                 // The goal changed and the portal is no longer on the way: left for another time (tried again).
                 LOG("AutoAttack: portal {}: not joined, {:.0f} tiles out of the way to the goal now at {},{}", from, more,
                     gtx, gty);
-                g_portalJoinTried &= ~(1u << from);
+                if (g_portalJoinTries[from])
+                {
+                    --g_portalJoinTries[from];
+                }
                 Portals::disarm();
                 g_portalTrip.onTileSince = 0;
             }
@@ -5496,12 +5514,12 @@ namespace
         }
         const uint32_t skip = portalsLeft(now);
         // A portal not joined yet on the way, gone out of the way for as a player does (the coordinator, 2026-11-16):
-        // once per portal and game, at most 60 tiles more than the way to the goal, never with a quest's time running
+        // twice at most per portal and game (the second after the first failed and its 30 min), at most 60 tiles more than the way to the goal, never with a quest's time running
         // nor in a fight (an enemy taken or a blow in the last 10 s).
         if (const uintptr_t hero = Teleports::hero(); hero != g_portalJoinHero)
         {
             g_portalJoinHero = hero;
-            g_portalJoinTried = 0;
+            std::fill(std::begin(g_portalJoinTries), std::end(g_portalJoinTries), uint8_t{0});
         }
         const bool timed = std::any_of(g_questBook.begin(), g_questBook.end(),
                                        [](const QuestGoal& g) { return g.minutesLeft > 0; });
@@ -5509,16 +5527,17 @@ namespace
         double extra = 0.0;
         if (const int joinId = timed || fighting ? -1
                                                  : Portals::unjoinedOnTheWay(htx, hty, gtx, gty, 60.0,
-                                                                             skip | g_portalJoinTried, extra);
+                                                                             skip | portalsTriedOut(), extra);
             joinId >= 0)
         {
             Portals::tile(joinId, ftx, fty);
-            g_portalJoinTried |= 1u << joinId;
             if (Act::allowed(Act::Kind::Portals, "go out of the way to a portal to join it"))
             {
+                ++g_portalJoinTries[joinId];
                 LOG("AutoAttack: portal {} at {},{} ({:.0f} tiles, {:.0f} more on the way to {},{}) not joined yet (the "
-                    "hero's portals {:x}): stepping onto it",
-                    joinId, ftx, fty, std::hypot(htx - ftx, hty - fty), extra, gtx, gty, Portals::joined());
+                    "hero's portals {:x}): stepping onto it (try {} of 2)",
+                    joinId, ftx, fty, std::hypot(htx - ftx, hty - fty), extra, gtx, gty, Portals::joined(),
+                    g_portalJoinTries[joinId]);
                 g_portalTrip.since = now;
                 g_portalTrip.onTileSince = 0;
                 g_portalTrip.farAt = 0;
