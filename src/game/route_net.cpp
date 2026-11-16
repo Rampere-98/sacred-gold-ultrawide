@@ -53,7 +53,8 @@ namespace
     std::deque<Kept> g_lengths;
 
     constexpr int kReach = 120;     // nodes this near an end (tiles, the larger axis) are tried for it
-    constexpr int kTry = 8, kKeep = 4;
+    // The nearest few only (the coordinator, 2026-11-16: 8 tried near the hero, each 1.5-5 s live).
+    constexpr int kTry = 4, kKeep = 3;
     // A trip's whole working out (the coordinator, 2026-11-16: A8 took 108 s to find no node near 1317,2240, another
     // trip 27 s, eight copies holding the processor and this thread at the lowest priority): past it, given up, and
     // the old ways for the walk.
@@ -485,7 +486,11 @@ RouteNet::Trip RouteNet::trip(int layer, int fromX, int fromY, int toX, int toY,
     {
         g_busy = true;
         std::thread([=] {
-            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+            // Its work is small and bounded (boxes of ~170 tiles a side, a net of ~1400 nodes, 4 stretches an end, the
+            // trip's budget): at the lowest priority, with eight copies holding the processor, it ran only when Windows
+            // lifted a starved thread, every few seconds (20:15: each stretch 1.5-5 s, «0 in the search»). At the
+            // game's own priority it shares the processor as the game's threads do.
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
             Kept r = work(layer, fromX, fromY, toX, toY);
             const std::lock_guard done(g_lock);
             g_kept = std::move(r);
@@ -522,7 +527,11 @@ float RouteNet::walkTiles(int fromX, int fromY, int toX, int toY)
     {
         g_busy = true;
         std::thread([=] {
-            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+            // Its work is small and bounded (boxes of ~170 tiles a side, a net of ~1400 nodes, 4 stretches an end, the
+            // trip's budget): at the lowest priority, with eight copies holding the processor, it ran only when Windows
+            // lifted a starved thread, every few seconds (20:15: each stretch 1.5-5 s, «0 in the search»). At the
+            // game's own priority it shares the processor as the game's threads do.
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
             Kept r = work(0, fromX, fromY, toX, toY);
             r.points.clear();   // only its length is kept
             r.points.shrink_to_fit();

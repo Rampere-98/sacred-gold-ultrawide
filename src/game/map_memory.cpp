@@ -2099,6 +2099,27 @@ bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, i
                             std::vector<std::pair<int, int>>& out, uint32_t maxMs)
 {
     const DWORD enteredAt = GetTickCount();
+    // Where a slow route's time went (the coordinator, 2026-11-16 20:15: stretches of a 24-tile margin took 1.5-5 s
+    // live, «0 in the search»): the wait for the map's lock, the box made from the map, the world files read in, the
+    // search. Told when the whole took over half a second.
+    struct Timing
+    {
+        DWORD entered, locked = 0, unlocked = 0, filed = 0, searched = 0;
+        int w = 0, h = 0, priority = 0;
+        ~Timing()
+        {
+            static std::atomic<int> s_told{0};
+            const DWORD now = GetTickCount();
+            if (locked && now - entered > 500 && s_told++ < 300)
+            {
+                const DWORD u = unlocked ? unlocked : now, f = filed ? filed : u, sr = searched ? searched : f;
+                LOG("MapMemory: route box {}x{} took {} ms: {} waiting for the map, {} making the box, {} the world files, "
+                    "{} the search (thread priority {})", w, h, now - entered, locked - entered, u - locked, f - u, now - sr,
+                    priority);
+            }
+        }
+    } timing{enteredAt};
+    timing.priority = GetThreadPriority(GetCurrentThread());
     out.clear();
     // A box around both ends; too far apart for one search (32 bit: keep it to a few MB), no route.
     constexpr int kMaxSide = 1100;
@@ -2121,6 +2142,9 @@ bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, i
     }
     std::unique_lock lock(g_lock);
     const DWORD lockedAt = GetTickCount();
+    timing.locked = lockedAt;
+    timing.w = w;
+    timing.h = h;
     ensureLoaded();
     // Per tile, the step's cost: walked or walkable by the tile test 10, never seen 22 (may be anything), not
     // walkable or blocked again and again: no way.
@@ -2212,6 +2236,7 @@ bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, i
         }
     }
     lock.unlock();
+    timing.unlocked = GetTickCount();
     if (priorityWas != THREAD_PRIORITY_ERROR_RETURN && priorityWas < THREAD_PRIORITY_NORMAL)
     {
         SetThreadPriority(GetCurrentThread(), priorityWas);
@@ -2306,6 +2331,8 @@ bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, i
     // A2-A8 and the window's thread in one for good on A8 at 14:13, the presenting thread behind a lock for 5.5 min):
     // «no route» for the caller, which then has its crude order and its clocks.
     const DWORD searchStart = GetTickCount();
+    timing.filed = searchStart;
+    timing.searched = searchStart;
     unsigned pops = 0;
     while (!open.empty())
     {
