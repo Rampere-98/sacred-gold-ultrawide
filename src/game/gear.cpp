@@ -1549,6 +1549,35 @@ namespace
         return k == 4 ? "mixed" : kindName(k);
     }
 
+    // A weapon of the hero's class alone (the player, 2026-11-16: «en las ranuras obligatoriamente armas exclusivas
+    // para su personaje»): its class mask (the low byte of info+4, a bit a class: Manolito, «Restricción de clase del
+    // ítem») one bit only, and the game's class test (canUse mode 1) passed by the hero.
+    bool ownClassOnly(cCreature* hero, uint32_t id)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cObject* item = objects && id ? objects->object(id) : nullptr;
+        const uint8_t* info = item && g_getInfo ? fn<GetInfo>(g_getInfo)(item, nullptr, -1) : nullptr;
+        if (!info || !g_canUse)
+        {
+            return false;
+        }
+        const uint8_t mask = info[4];
+        return mask && !(mask & (mask - 1)) && fn<CanUse>(g_canUse)(hero, nullptr, id, 1) != 0;
+    }
+
+    // The agents' copies (SacredA1..A8), never the player's folder.
+    bool agentCopy()
+    {
+        static const bool s_agentCopy = [] {
+            wchar_t exe[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, exe, MAX_PATH);
+            std::wstring dir = exe;
+            dir = dir.substr(0, dir.find_last_of(L"\\/"));
+            return dir.substr(dir.find_last_of(L"\\/") + 1).rfind(L"SacredA", 0) == 0;
+        }();
+        return s_agentCopy;
+    }
+
     // A slot's weapon: the hand that holds one (the weapon hand first; a shield is none).
     uint32_t slotWeapon(const uint8_t* pack, int slot)
     {
@@ -1660,7 +1689,7 @@ namespace
                 return;
             }
             ++seen;
-            if (!fn<CanUse>(g_canUse)(hero, nullptr, id, 0))
+            if (!fn<CanUse>(g_canUse)(hero, nullptr, id, 0) || styleOf(id) != 0 || !ownClassOnly(hero, id))
             {
                 return;
             }
@@ -1977,6 +2006,18 @@ namespace
                                                      sameElement ? elementName(slotElement(wa)) : "")});
             }
         }
+        // A weapon not of the hero's class alone, in a slot not in use: given back for one that is (in the agents'
+        // copies any slot, the ones it filled before a restart too; in the player's folder only those it filled).
+        for (int slot = 0; slot < open; ++slot)
+        {
+            const uint32_t w = slotWeapon(pack, slot);
+            if (!w || slot == active || ownClassOnly(hero, w) || (!agentCopy() && !g_agentPut.count(w)) ||
+                std::any_of(targets.begin(), targets.end(), [&](const Target& t) { return t.slot == slot; }))
+            {
+                continue;
+            }
+            targets.push_back({slot, "not a weapon of the hero's class alone"});
+        }
         if (targets.empty())
         {
             return false;
@@ -1997,7 +2038,7 @@ namespace
                     return;
                 }
                 const int kind = slotElement(id), style = styleOf(id);
-                if (kind < 0 || style < 0 || styles[style] || elements[kind])
+                if (kind < 0 || style < 0 || styles[style] || elements[kind] || !ownClassOnly(hero, id))
                 {
                     return;
                 }
