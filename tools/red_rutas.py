@@ -216,7 +216,7 @@ class Grid:
 
 
 def graph(grid):
-    """The layer's known walkable tiles as a graph (8 neighbours, no corner cut; a step costs the tile entered), made
+    """The layer's known walkable tiles as a graph (8 neighbours, a wall's corner cut dear; a step costs the tile entered), made
     once: scipy's Dijkstra over it, the grid too large for one in Python."""
     if getattr(grid, "csr", None) is not None:
         return grid.csr
@@ -235,12 +235,13 @@ def graph(grid):
         good = (nx >= 0) & (ny >= 0) & (nx < w) & (ny < h)
         a, b, c, d = xs[good], ys[good], nx[good], ny[good]
         good = ok[d, c]
-        if dx and dy:
-            good &= ok[b, c] & ok[d, a]
-        a, b, c, d = a[good], b[good], c[good], d[good]
+        # A diagonal past a wall's corner: walked tiles that touch only diagonally (MP_START's gate, the merged map
+        # cut in two there): the step allowed, dearer the more corners are walls.
+        corners = (~ok[b, c]).astype(np.float64) + (~ok[d, a]) if dx and dy else np.zeros(len(a))
+        a, b, c, d, corners = a[good], b[good], c[good], d[good], corners[good]
         rows.append(idx[b, a])
         cols.append(idx[d, c])
-        vals.append(step[d, c].astype(np.float64) * m / 10)
+        vals.append(step[d, c].astype(np.float64) * m / 10 * (1 + corners))
     n = int(ok.sum())
     grid.csr = csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n))
     return grid.csr
