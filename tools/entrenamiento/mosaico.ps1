@@ -147,13 +147,13 @@ public class Mosaico : Form
         Screen s = Screen.AllScreens.OrderByDescending(x => (double)x.Bounds.Width / x.Bounds.Height).First();
         Bounds = s.WorkingArea;
         KeyPreview = true;
-        KeyDown += (o, e) => { if (e.KeyCode == Keys.Escape) Close(); else if (e.KeyCode == Keys.R) ShowWheel(wheel == null || !wheel.Visible); };
+        KeyDown += (o, e) => { if (e.KeyCode == Keys.Escape) Close(); else if (e.KeyCode == Keys.R) ShowWheel(!WheelOpen); };
         MouseDoubleClick += (o, e) => { int c = CellAt(e.Location); zoomed = zoomed >= 0 ? -1 : c; PlaceThumbs(); Invalidate(); };
         MouseUp += (o, e) => { if (e.Button == MouseButtons.Right) { int c = CellAt(e.Location); if (c >= 0) CellMenu(c).Show(this, e.Location); } };
         BuildBar();
         timer.Interval = 1000;
         timer.Tick += (o, e) => Tick();
-        Shown += (o, e) => { Tick(); timer.Start(); ShowWheel(true); };
+        Shown += (o, e) => { Tick(); timer.Start(); ShowWheel(false); };
         FormClosed += (o, e) => { for (int i = 0; i < 8; i++) if (thumb[i] != IntPtr.Zero) DwmUnregisterThumbnail(thumb[i]); };
     }
 
@@ -197,8 +197,8 @@ public class Mosaico : Form
             "El vigilante guarda y reinicia solo las copias que llevan 20 min sin progreso");
         Btn(bar, "Relanzar lanzador", grey, (o, e) => { if (Ask("¿Parar y volver a arrancar el lanzador de las copias?")) RestartLauncher(); },
             "Para todos los lanzadores (agentes.sh) y arranca uno; reabre las copias que falten");
-        Btn(bar, "Rueda", Color.FromArgb(110, 35, 35), (o, e) => ShowWheel(wheel == null || !wheel.Visible),
-            "Muestra u oculta la rueda del centro: elige un grupo (A1–A4, A5–A8 o todas) y una acción solo para ese grupo (tecla R)");
+        Btn(bar, "Rueda", Color.FromArgb(110, 35, 35), (o, e) => ShowWheel(!WheelOpen),
+            "Abre o pliega la rueda (también con un clic en la bolita roja, que se arrastra a donde quieras): elige un grupo (A1–A4, A5–A8 o todas) y una acción solo para ese grupo (tecla R)");
         Btn(bar, "Registro del vigilante", grey, (o, e) => Open("notepad.exe", Path.Combine(tools, "vigilante.log")), "Lo que el vigilante ha cerrado o reiniciado");
         Btn(bar, "Atascos", grey, (o, e) => Open("explorer.exe", Path.Combine(tools, "atascos")), "Carpeta de atascos guardados para el solucionador");
         status = new Label { AutoSize = true, ForeColor = Color.Silver, Font = small, Margin = new Padding(14, 9, 3, 3) };
@@ -653,17 +653,27 @@ public class Mosaico : Form
     List<int> GroupCopies() { return (group == 0 ? Enumerable.Range(0, 4) : group == 1 ? Enumerable.Range(4, 4) : Enumerable.Range(0, 8)).ToList(); }
     bool InGroup(int i) { return group == 2 || (group == 0 ? i < 4 : i >= 4); }
 
-    void ShowWheel(bool show)
+    // The wheel folds (the player, 2026-11-16: "it takes much room, let it come and go"): a small knob in the middle
+    // that opens into the wheel on a click and folds back after an action or once the mouse leaves it. The knob can be
+    // dragged anywhere; the wheel opens round it.
+    void ShowWheel(bool open)
     {
         if (wheel == null) wheel = new Rueda(this);
-        if (show) { wheel.Place(); if (!wheel.Visible) wheel.Show(this); } else wheel.Hide();
+        wheel.SetOpen(open);
+        if (!wheel.Visible) wheel.Show(this);
         Invalidate();
     }
+    bool WheelOpen { get { return wheel != null && wheel.Visible && wheel.IsOpen; } }
 
     class Rueda : Form
     {
-        const int R = 150, Hub = 58;
+        const int R = 150, Hub = 58, K = 24;      // K: the folded knob's radius
         readonly Mosaico m;
+        bool open = true;
+        public bool IsOpen { get { return open; } }
+        Point off = Point.Empty;                // the knob's centre from the mosaic's middle (dragged by the player)
+        Point downAt; bool dragging, down;
+        readonly Timer fold = new Timer { Interval = 1200 };
         int hover = -1;                 // 0..4 a sector of the ring, 10 + n the hub's group row n
         static readonly string[] Actions = { "Guardar", "Reiniciar", "Reiniciar parados", "Pausar agentes", "Reanudar agentes" };
         static readonly Color[] ActionColor = {
@@ -673,18 +683,52 @@ public class Mosaico : Form
         {
             this.m = m;
             FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual;
-            Size = new Size(2 * R, 2 * R); BackColor = Color.FromArgb(18, 18, 24); DoubleBuffered = true; Opacity = 0.95;
-            var path = new GraphicsPath(); path.AddEllipse(0, 0, 2 * R, 2 * R); Region = new Region(path);
+            BackColor = Color.FromArgb(18, 18, 24); DoubleBuffered = true; Opacity = 0.95;
             Cursor = Cursors.Hand;
-            MouseMove += (o, e) => { int h = HitTest(e.Location); if (h != hover) { hover = h; Invalidate(); } };
-            MouseLeave += (o, e) => { hover = -1; Invalidate(); };
-            MouseClick += (o, e) => { if (e.Button == MouseButtons.Left) RunAt(HitTest(e.Location)); };
+            fold.Tick += (o, e) => { fold.Stop(); if (open && !Bounds.Contains(Control.MousePosition)) SetOpen(false); };
+            MouseEnter += (o, e) => fold.Stop();
+            MouseLeave += (o, e) => { hover = -1; Invalidate(); if (open) fold.Start(); };
+            MouseDown += (o, e) => { if (e.Button == MouseButtons.Left && !open) { down = true; dragging = false; downAt = Control.MousePosition; } };
+            MouseMove += (o, e) =>
+            {
+                if (!open)
+                {
+                    if (!down) return;
+                    Point p = Control.MousePosition;
+                    if (!dragging && Math.Abs(p.X - downAt.X) + Math.Abs(p.Y - downAt.Y) > 4) dragging = true;
+                    if (dragging) { off.Offset(p.X - downAt.X, p.Y - downAt.Y); downAt = p; Place(); }
+                    return;
+                }
+                int h = HitTest(e.Location); if (h != hover) { hover = h; Invalidate(); }
+            };
+            MouseUp += (o, e) =>
+            {
+                if (e.Button != MouseButtons.Left) return;
+                if (!open) { bool was = dragging; down = dragging = false; if (!was) SetOpen(true); return; }
+                RunAt(HitTest(e.Location));
+            };
+            SetOpen(false);
+        }
+
+        public void SetOpen(bool o)
+        {
+            open = o; hover = -1; fold.Stop();
+            int r = open ? R : K;
+            Size = new Size(2 * r, 2 * r);
+            var path = new GraphicsPath(); path.AddEllipse(0, 0, 2 * r, 2 * r); Region = new Region(path);
+            Opacity = open ? 0.95 : 0.85;
+            Place(); Invalidate();
         }
 
         public void Place()
         {
             Rectangle b = m.Bounds;
-            Location = new Point(b.X + b.Width / 2 - R, b.Y + TopH + (b.Height - TopH) / 2 - R);
+            int r = open ? R : K;
+            int cx = b.X + b.Width / 2 + off.X, cy = b.Y + TopH + (b.Height - TopH) / 2 + off.Y;
+            // Kept whole on the mosaic.
+            cx = Math.Max(b.X + r, Math.Min(b.Right - r, cx));
+            cy = Math.Max(b.Y + TopH + r, Math.Min(b.Bottom - r, cy));
+            Location = new Point(cx - r, cy - r);
         }
 
         int HitTest(Point p)
@@ -712,6 +756,7 @@ public class Mosaico : Form
                 case 4: foreach (int i in copies) m.SetPaused(i, false); break;
             }
             m.Invalidate();
+            SetOpen(false);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -719,6 +764,16 @@ public class Mosaico : Form
             base.OnPaint(e);
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            if (!open)
+            {
+                var knob = new Rectangle(1, 1, 2 * K - 3, 2 * K - 3);
+                using (var b = new SolidBrush(Color.FromArgb(150, 40, 40))) g.FillEllipse(b, knob);
+                using (var p = new Pen(Color.FromArgb(230, 120, 120), 2f)) g.DrawEllipse(p, knob);
+                string label = m.group == 0 ? "1-4" : m.group == 1 ? "5-8" : "1-8";
+                TextRenderer.DrawText(g, label, m.small, new Rectangle(0, 0, 2 * K, 2 * K), Color.White,
+                                      TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                return;
+            }
             var disc = new Rectangle(0, 0, 2 * R - 1, 2 * R - 1);
             var flags = TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak;
             for (int s = 0; s < 5; s++)
