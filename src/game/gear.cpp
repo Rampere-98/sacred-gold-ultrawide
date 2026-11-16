@@ -314,7 +314,6 @@ namespace
     // has stayed the same a minute: no swinging as the goal flips); 0 while none.
     std::atomic<int> g_zoneShare[4] = {};
     std::atomic<int> g_zoneRegion{-1};
-    bool g_plainWorth = false;      // the storage's choice: a piece judged without the zone (for use everywhere)
 
     Worth worth(uint32_t id)
     {
@@ -354,7 +353,7 @@ namespace
             // Where the hero is going: its elements' resistances count twice more by their share there (the player,
             // 2026-11-16: «equipamiento con resistencia a la zona donde van»). The base resistance is in the armour
             // already; physical is everywhere.
-            if (!w.weapon && !g_plainWorth && g_zoneRegion.load() >= 0)
+            if (!w.weapon && g_zoneRegion.load() >= 0)
             {
                 float r[4];
                 resistOf(cObjectManager::instance() ? cObjectManager::instance()->hero() : nullptr, id, r);
@@ -1243,7 +1242,8 @@ namespace
     std::atomic<bool> g_tripShop{false};    // the shop open now is the trip's
     std::atomic<bool> g_tripDone{false};    // the trip's shop has nothing more: to be closed
     std::atomic<bool> g_tripLeftFull{false};    // the trip over with the backpack still full
-    std::atomic<bool> g_closeShop{false};   // the trip is over: the merchant's window closed the game's own way
+    std::atomic<bool> g_closeShop{false};
+    std::atomic<uint32_t> g_storageId{0};       // the storage chest the agent used (0: no visit; Gear's storage below)   // the trip is over: the merchant's window closed the game's own way
     int g_idleWorks = 0;
     std::atomic<DWORD> g_noTripUntil{0};    // full with nothing to sell: no trip again for a while
     std::atomic<DWORD> g_askPotionsUntil{0};    // the auto attack asked for healing potions until then (0: not)
@@ -2177,7 +2177,8 @@ namespace
             }
         }
         static DWORD s_chestSince = 0;
-        if (uint8_t* chest = *reinterpret_cast<uint8_t* const*>(ui + 0xC0); visible(chest))
+        // Not the storage chest the agent is working in (its visit closes it, by the inventory; the reviewer, S3).
+        if (uint8_t* chest = *reinterpret_cast<uint8_t* const*>(ui + 0xC0); visible(chest) && !g_storageId.load())
         {
             const DWORD now = GetTickCount();
             if (!s_chestSince)
@@ -3345,7 +3346,10 @@ namespace
     constexpr uintptr_t kMoveItem = 0x5DECC0;
 
     std::atomic<bool> g_wantStore{false}, g_wantTake{false};
-    std::atomic<uint32_t> g_storageId{0};       // the storage chest the agent used (0: no visit)
+    // The storage full at the last put (no piece kept from the merchant meanwhile; the reviewer, S2): 0 not.
+    DWORD g_storageFullAt = 0;
+    // This visit's moves: what went in does not come out, nor the other way (the reviewer, S1).
+    std::unordered_set<uint32_t> g_visitIn, g_visitOut;
     std::atomic<DWORD> g_storageAt{0};          // when it was used, then when the work in it was done
     std::atomic<bool> g_storageDone{false};     // the work done: closing
     DWORD g_storageVisitAt = 0;                 // the last visit (none wanted again for 10 min but for a new piece)
@@ -3379,7 +3383,11 @@ namespace
             float resist;
         };
         std::vector<Piece> all;
-        g_plainWorth = true;
+        // Kept only with a storage chest near and room in it (the reviewer, S2): else sold as before.
+        if (!AutoAttack::storageNear() || (g_storageFullAt && GetTickCount() - g_storageFullAt < 1800000))
+        {
+            return {};
+        }
         const auto consider = [&](uint32_t id, bool stored) {
             if ((flagsOf(id) & kQuestItem) || worth(id).weapon || !fn<CanUse>(g_canUse)(hero, nullptr, id, 1))
             {
@@ -3390,10 +3398,11 @@ namespace
             {
                 return;
             }
-            bool fits = false;
-            if (!stored && bestSlot(hero, id, 0.05f, nullptr, &fits) >= 0)
+            // Better than what is worn, for where the hero is going too: put on (or taken out), not kept (the same
+            // judgement as the taking out: nothing in and out again; the reviewer, S1).
+            if (bestSlot(hero, id, 0.05f) >= 0)
             {
-                return;     // better than what is worn: put on, not stored
+                return;
             }
             float r[4];
             resistOf(hero, id, r);
@@ -3412,7 +3421,6 @@ namespace
         {
             eachItem(store, [&](uint32_t id, int, int, int) { consider(id, true); });
         }
-        g_plainWorth = false;
         std::sort(all.begin(), all.end(), [](const Piece& a, const Piece& b) {
             return a.key != b.key ? a.key < b.key : a.resist > b.resist;
         });
@@ -3545,12 +3553,19 @@ namespace
             }
             // One kept piece in.
             uint32_t in = 0;
-            eachItem(pack, [&](uint32_t id, int, int, int) { in = !in && g_storageKeep.count(id) ? id : in; });
+            eachItem(pack, [&](uint32_t id, int, int, int) {
+                in = !in && g_storageKeep.count(id) && !g_visitOut.count(id) && !g_visitIn.count(id) ? id : in;
+            });
             if (in)
             {
                 float r[4];
                 resistOf(hero, in, r);
                 const bool moved = reinterpret_cast<MoveItem>(kMoveItem)(inv, nullptr, heroIdx, kStoreEntry, in, heroIdx) != 0;
+                g_visitIn.insert(in);
+                if (!moved)
+                {
+                    g_storageFullAt = now | 1;      // no room: nothing kept from the merchant for half an hour
+                }
                 LOG("Gear: storage: {:x} (type {:x}, resistances {:.0f}/{:.0f}/{:.0f}/{:.0f}) {}", in, typeOf(in), r[0],
                     r[1], r[2], r[3], moved ? "put in, kept for a zone" : "not put in: no room in the storage");
                 if (moved)
@@ -3564,20 +3579,22 @@ namespace
             if (store && g_zoneRegion.load() >= 0)
             {
                 eachItem(store, [&](uint32_t id, int, int, int) {
-                    out = !out && fn<CanUse>(g_canUse)(hero, nullptr, id, 0) && bestSlot(hero, id, 0.05f) >= 0 ? id : out;
+                    out = !out && !g_visitIn.count(id) && !g_visitOut.count(id) &&
+                                  fn<CanUse>(g_canUse)(hero, nullptr, id, 0) && bestSlot(hero, id, 0.05f) >= 0
+                              ? id : out;
                 });
             }
             if (out)
             {
-                using LocalPlayer = uintptr_t(__cdecl*)();
-                const uintptr_t local = reinterpret_cast<LocalPlayer>(0x7D84A0)();
-                const uint32_t player = local ? *reinterpret_cast<const uint32_t*>(local + 0x14) : heroIdx;
-                const bool moved = reinterpret_cast<MoveItem>(kMoveItem)(inv, nullptr, kStoreEntry, heroIdx, out, player) != 0;
+                // The fourth argument is not read by moveItem (BH 9): the hero's index both ways (the reviewer, S4).
+                const bool moved = reinterpret_cast<MoveItem>(kMoveItem)(inv, nullptr, kStoreEntry, heroIdx, out, heroIdx) != 0;
+                g_visitOut.insert(out);
                 LOG("Gear: storage: {:x} (type {:x}) {} for region {}", out, typeOf(out),
                     moved ? "taken out, to wear" : "not taken out: no room in the backpack", g_zoneRegion.load());
                 if (moved)
                 {
                     g_noPutOn.erase(out);
+                    g_storageFullAt = 0;    // a place freed
                     return true;
                 }
             }
@@ -4292,6 +4309,8 @@ void Gear::storageUsed(uint32_t id)
     if (g_storageId.load() != id)
     {
         g_storageDone = false;
+        g_visitIn.clear();
+        g_visitOut.clear();
     }
     g_storageId = id;
     g_storageAt = GetTickCount();

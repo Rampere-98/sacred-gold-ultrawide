@@ -20,6 +20,8 @@ namespace AutoAttack
     // The region (Manolito, block BH 5: [sector+0x17C] +0xD7) of where the hero is going: its quest goal's tile, or
     // its own with none; -1 not known. Any thread.
     int destinationRegion();
+    // A storage chest seen within 40 tiles on the hero's layer (the one the agent would go to). Any thread.
+    bool storageNear();
 
     // Hooks it needs; call inside a Patch transaction.
     void install();

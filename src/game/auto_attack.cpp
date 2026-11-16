@@ -215,6 +215,7 @@ namespace
     };
     StorageSeen g_storage;
     std::atomic<int> g_destRegion{-1};
+    std::atomic<bool> g_storageNear{false};
 
     void storageSeen(cObject* object)
     {
@@ -5685,6 +5686,10 @@ namespace
         // click on it); Gear moves the pieces while its window is open and closes it. Not before the merchant.
         static DWORD s_storageFailedAt = 0, s_storageAskAt = 0, s_storageClickAt = 0;
         static int s_storageTries = 0;
+        g_storageNear = g_storage.id && g_storage.layer == layer &&
+                        (!s_storageFailedAt || now - s_storageFailedAt > 600000) &&
+                        std::hypot(static_cast<double>(g_storage.x - self->x), static_cast<double>(g_storage.y - self->y)) <=
+                            40.0 * kTileSize;
         if (Gear::wantsStorage() && !Gear::storageOpen() && !Gear::wantsShop() && g_storage.id && g_storage.layer == layer &&
             Act::may(Act::Kind::Storage) && (!s_storageFailedAt || now - s_storageFailedAt > 600000))
         {
@@ -9317,6 +9322,11 @@ void AutoAttack::footFor(unsigned long ms)
 int AutoAttack::destinationRegion()
 {
     return g_destRegion.load();
+}
+
+bool AutoAttack::storageNear()
+{
+    return g_storageNear.load();
 }
 
 bool AutoAttack::foughtWithin(unsigned long ms)
