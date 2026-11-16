@@ -1,6 +1,7 @@
 #include "game/hero_build.h"
 #include "game/act.h"
 #include "game/combat_learn.h"
+#include "game/combat_state.h"
 #include "game/tactics.h"
 #include "game/mind.h"
 #include "config/tactics.h"
@@ -18,6 +19,9 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <cwchar>
+#include <cstdio>
+#include <vector>
 
 using namespace Sacred;
 
@@ -30,6 +34,7 @@ namespace
         bool learn = true;
         bool bar = true;
         bool swap = true;       // [Build] SwapBar: arts swapped on a full bar for the situation (docs/Artes-de-la-barra.md)
+        bool presets = false;   // [Build] ArtPresets: each weapon slot keeps its own art bar
     };
     Settings g_settings;
 
@@ -540,7 +545,8 @@ namespace
         else if (g_settings.bar && g_setSlot && Act::may(Act::Kind::ArtBar) && fillBar(hero, st))
         {
         }
-        else if (g_settings.bar && g_settings.swap && g_setSlot && Act::may(Act::Kind::ArtBar) && arrangeBar(hero))
+        else if (g_settings.bar && g_settings.swap && !g_settings.presets && g_setSlot && Act::may(Act::Kind::ArtBar) &&
+                 arrangeBar(hero))
         {
         }
         else if (g_settings.skills && *reinterpret_cast<const uint16_t*>(st + 0x42) > 0 &&
@@ -577,6 +583,235 @@ namespace
         g_working = false;
     }
 
+    // Art presets by weapon slot (the player, 2026-11-16: «las ranuras de armas quiero que carguen presets [...] cada
+    // ranura quiero que contenga un preset de artes [...] diversificar el combate y ampliar las tácticas»). Each weapon
+    // slot (the player's data +0xD58; 1-5 by level, the same table as the art slots) remembers the art bar it last had;
+    // a switch to another slot puts that slot's bar back through the taskbar's own setter, as a drop. A hero with n
+    // weapon slots has n presets. Only learned arts and combos are put back; nothing while an art is being cast.
+    constexpr size_t kActiveWeaponSlot = 0xD58;
+    constexpr int kPresetSlots = 5;
+    struct Preset
+    {
+        bool set = false;
+        uint8_t entries[cUI_Taskbar2::slotCount][kArtEntrySize] = {};
+    };
+    struct PresetState
+    {
+        uint32_t heroId = 0, cls = 0;
+        int lastSlot = -1;          // the weapon slot the bar belongs to (-1: not sampled since the load)
+        int pendingSlot = -1;       // a switch waiting for the cast to end
+        Preset presets[kPresetSlots];
+        DWORD dirtyAt = 0;          // the file written 5 s after the last change
+        DWORD restores[8] = {};
+        int nextRestore = 0;
+    };
+    PresetState g_presets;
+    std::atomic<bool> g_presetsWorking{false};
+
+    std::wstring presetsPath()
+    {
+        wchar_t exe[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring path = exe;
+        return path.substr(0, path.find_last_of(L"\\/") + 1) + L"SacredBild-presets.ini";
+    }
+
+    // One file beside the game, a section per class (one hero of each class per folder, as the player and the copies
+    // play): Slot1..Slot5 = the bar's 20-byte entries in hex.
+    void loadPresets(uint32_t cls)
+    {
+        const std::wstring path = presetsPath(), section = L"Class" + std::to_wstring(cls);
+        for (int w = 0; w < kPresetSlots; ++w)
+        {
+            Preset& p = g_presets.presets[w];
+            p = Preset{};
+            wchar_t buf[512] = {};
+            GetPrivateProfileStringW(section.c_str(), (L"Slot" + std::to_wstring(w + 1)).c_str(), L"", buf, 512, path.c_str());
+            if (std::wcslen(buf) != sizeof(p.entries) * 2)
+            {
+                continue;
+            }
+            uint8_t* out = &p.entries[0][0];
+            for (size_t i = 0; i < sizeof(p.entries); ++i)
+            {
+                const wchar_t two[3] = {buf[i * 2], buf[i * 2 + 1], 0};
+                out[i] = static_cast<uint8_t>(std::wcstoul(two, nullptr, 16));
+            }
+            p.set = true;
+        }
+    }
+
+    void savePresets()
+    {
+        const std::wstring path = presetsPath(), section = L"Class" + std::to_wstring(g_presets.cls);
+        for (int w = 0; w < kPresetSlots; ++w)
+        {
+            const Preset& p = g_presets.presets[w];
+            if (!p.set)
+            {
+                continue;
+            }
+            std::wstring hex;
+            const uint8_t* in = &p.entries[0][0];
+            for (size_t i = 0; i < sizeof(p.entries); ++i)
+            {
+                wchar_t two[3] = {};
+                swprintf(two, 3, L"%02X", in[i]);
+                hex += two;
+            }
+            WritePrivateProfileStringW(section.c_str(), (L"Slot" + std::to_wstring(w + 1)).c_str(), hex.c_str(), path.c_str());
+        }
+    }
+
+    // On the engine's thread, as the taskbar's own drops.
+    void presetsWork(void*)
+    {
+        struct Done
+        {
+            ~Done() { g_presetsWorking = false; }
+        } done;
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        cUI_Manager* manager = cUI_Manager::instance();
+        cUI_Taskbar2* taskbar = manager ? manager->taskbar() : nullptr;
+        uint8_t* players = *reinterpret_cast<uint8_t* const*>(kPlayers);
+        const uint32_t index = hero ? hero->id & 0xFFFF : 0x20;
+        if (!hero || hero->health <= 0 || !taskbar || !players || index >= 0x20)
+        {
+            return;
+        }
+        const DWORD now = GetTickCount();
+        const uint32_t cls = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kStats + 8);
+        // Another hero (a load, a new game): its class's presets from the file, the bar only sampled at first.
+        if (hero->id != g_presets.heroId || cls != g_presets.cls)
+        {
+            if (g_presets.dirtyAt)
+            {
+                savePresets();
+            }
+            g_presets = PresetState{};
+            g_presets.heroId = hero->id;
+            g_presets.cls = cls;
+            loadPresets(cls);
+        }
+        uint8_t* player = players + index * kPlayerSize;
+        const int shown = std::clamp<int>(*reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(taskbar) +
+            kTaskbarSlots), 0, cUI_Taskbar2::slotCount);
+        const int alt = (player[kAltBar] & 2) ? 1 : 0;
+        auto entry = [&](int slot) { return player + kArtEntries + static_cast<size_t>(slot * 2 + alt) * kArtEntrySize; };
+        const int weapon = *reinterpret_cast<const uint16_t*>(player + kActiveWeaponSlot);
+        if (weapon < 0 || weapon >= kPresetSlots)
+        {
+            return;
+        }
+        auto snapshot = [&](int w) {
+            Preset& p = g_presets.presets[w];
+            bool changed = !p.set;
+            for (int slot = 0; slot < cUI_Taskbar2::slotCount; ++slot)
+            {
+                changed = changed || std::memcmp(p.entries[slot], entry(slot), kArtEntrySize) != 0;
+                std::memcpy(p.entries[slot], entry(slot), kArtEntrySize);
+            }
+            p.set = true;
+            if (changed)
+            {
+                g_presets.dirtyAt = now ? now : 1;
+            }
+        };
+        if (g_presets.lastSlot < 0)
+        {
+            g_presets.lastSlot = weapon;
+            if (!g_presets.presets[weapon].set)
+            {
+                snapshot(weapon);
+            }
+            std::string kept;
+            for (int w = 0; w < kPresetSlots; ++w)
+            {
+                if (g_presets.presets[w].set)
+                {
+                    kept += std::to_string(w + 1);
+                }
+            }
+            LOG("ArtPresets: weapon slot {} at the start; presets kept for slots {}", weapon + 1, kept.empty() ? "none" : kept);
+            return;
+        }
+        if (weapon != g_presets.lastSlot || g_presets.pendingSlot >= 0)
+        {
+            // The bar so far is the slot left's (kept each pass below; not again while a switch waits).
+            if (g_presets.pendingSlot < 0)
+            {
+                snapshot(g_presets.lastSlot);
+            }
+            const Preset& p = g_presets.presets[weapon];
+            std::vector<Tactics::ArtFact> facts;
+            const bool casting = static_cast<int>(CombatState::measuringUntil.load() - now) > 0;
+            if (p.set && (casting || !Tactics::artFacts(facts)))
+            {
+                g_presets.pendingSlot = weapon;     // put back once the cast is over and the arts are known
+                return;
+            }
+            g_presets.pendingSlot = -1;
+            if (weapon == g_presets.lastSlot)
+            {
+                return;     // switched back before it was put back: the bar is still this slot's
+            }
+            if (p.set)
+            {
+                int put = 0, refused = 0, left = 0;
+                for (int slot = 0; slot < shown; ++slot)
+                {
+                    const uint8_t* want = p.entries[slot];
+                    if (std::memcmp(want, entry(slot), kArtEntrySize) == 0)
+                    {
+                        continue;
+                    }
+                    const uint16_t kind = *reinterpret_cast<const uint16_t*>(want);
+                    const uint32_t art = *reinterpret_cast<const uint32_t*>(want + 4);
+                    if (!kind)
+                    {
+                        ++left;     // no clean way known yet to empty a slot (asked of Manolito): left as it is
+                        continue;
+                    }
+                    const bool learned = std::any_of(facts.begin(), facts.end(),
+                                                     [&](const Tactics::ArtFact& f) { return f.art == art; });
+                    if (!learned)
+                    {
+                        ++refused;
+                        continue;
+                    }
+                    reinterpret_cast<SetSlot>(g_setSlot)(player, nullptr, static_cast<uint32_t>(slot), kind,
+                                                         *reinterpret_cast<const uint16_t*>(want + 2),
+                                                         reinterpret_cast<const uint32_t*>(want + 4));
+                    // The bar is the player's preset now: the situation swaps leave it alone.
+                    g_bar.placed[slot] = 0;
+                    g_bar.playerUntil[slot] = now + kPlayerHoldMs;
+                    ++put;
+                }
+                const DWORD oldest = g_presets.restores[g_presets.nextRestore];
+                g_presets.restores[g_presets.nextRestore] = now ? now : 1;
+                g_presets.nextRestore = (g_presets.nextRestore + 1) % 8;
+                LOG("ArtPresets: weapon slot {} -> {}: {} arts put back, {} not learned, {} left (no way to empty one){}",
+                    g_presets.lastSlot + 1, weapon + 1, put, refused, left,
+                    oldest && now - oldest < 60000 ? " (8 switches within a minute)" : "");
+            }
+            else
+            {
+                LOG("ArtPresets: weapon slot {} -> {}: no preset yet, this bar kept for it", g_presets.lastSlot + 1, weapon + 1);
+                snapshot(weapon);
+            }
+            g_presets.lastSlot = weapon;
+            return;
+        }
+        // The same slot: whatever the bar holds now is its preset.
+        snapshot(weapon);
+        if (g_presets.dirtyAt && now - g_presets.dirtyAt > 5000)
+        {
+            savePresets();
+            g_presets.dirtyAt = 0;
+        }
+    }
+
     std::wstring iniPath()
     {
         wchar_t exe[MAX_PATH] = {};
@@ -603,6 +838,10 @@ namespace
         ImGui::Checkbox("Poner artes y combos en la barra", &g_settings.bar);
         ImGui::SetItemTooltip("En los huecos libres de la barra (teclas 6-0) que ya tiene el héroe: primero los combos, "
                               "luego las artes de más nivel. Lo que pusiste tú no se toca.");
+        ImGui::Checkbox("Presets de artes por ranura de armas", &g_settings.presets);
+        ImGui::SetItemTooltip("Cada ranura de armas (teclas 1-5) recuerda la barra de artes que tenía: al cambiar de "
+                              "ranura vuelve la suya. Tantos presets como ranuras tenga el héroe. Solo artes aprendidas; "
+                              "con esto encendido, el cambio de artes según la situación queda apagado.");
         ImGui::Checkbox("Cambiar las artes según la situación", &g_settings.swap);
         ImGui::SetItemTooltip("Con la barra llena, fuera de combate y de una en una: artes de área para grupos, de un "
                               "blanco para enemigos sueltos o fuertes, solo las que se pueden usar a caballo al ir "
@@ -616,6 +855,7 @@ namespace
         ModkitMenu::write(ini, L"Build", L"Learn", g_settings.learn);
         ModkitMenu::write(ini, L"Build", L"Bar", g_settings.bar);
         ModkitMenu::write(ini, L"Build", L"SwapBar", g_settings.swap);
+        ModkitMenu::write(ini, L"Build", L"ArtPresets", g_settings.presets);
     }
 
     void install()
@@ -626,6 +866,7 @@ namespace
         g_settings.learn = GetPrivateProfileIntW(L"Build", L"Learn", 1, ini.c_str()) != 0;
         g_settings.bar = GetPrivateProfileIntW(L"Build", L"Bar", 1, ini.c_str()) != 0;
         g_settings.swap = GetPrivateProfileIntW(L"Build", L"SwapBar", 1, ini.c_str()) != 0;
+        g_settings.presets = GetPrivateProfileIntW(L"Build", L"ArtPresets", 0, ini.c_str()) != 0;
         g_ready = Sig::resolve(kSigs) == 0;
         LOG("HeroBuild: {} (attributes {}, skills {}, learn {})", g_ready ? "ready" : "not available (signatures)",
             g_settings.attributes, g_settings.skills, g_settings.learn);
@@ -637,6 +878,15 @@ void HeroBuild::onFrame(DWORD now, bool calm)
 {
     static std::once_flag once;
     std::call_once(once, install);
+    // The presets every 100 ms, in a fight too: a switch of weapon slot brings its arts at once.
+    static DWORD presetsAt = 0;
+    if (g_ready && g_setSlot && g_settings.presets && !g_presetsWorking &&
+        (!presetsAt || static_cast<int>(now - presetsAt) >= 0))
+    {
+        presetsAt = now + 100;
+        g_presetsWorking = true;
+        Inject::engineCall(&presetsWork, nullptr);
+    }
     static DWORD nextAt = 0;
     if (!g_ready || !calm || (nextAt && static_cast<int>(now - nextAt) < 0) || g_working ||
         !(g_settings.attributes || g_settings.skills || g_settings.learn || g_settings.bar))
