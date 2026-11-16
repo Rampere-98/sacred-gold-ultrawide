@@ -7584,13 +7584,44 @@ namespace
     // The portal box opens when the hero steps on a portal (on the way to loot, an enemy, a quest) and holds the
     // whole game in its modal loop: no frames, so onFrame cannot see it. A thread of its own closes it (Escape, the
     // box's Cancel) once it has stood 1.5 s with the agent on; the player's own portal trips are theirs.
+    // The game menu (Escape) open under the agent (A7, 2026-11-15: «el agente entra en el menú de pausa, impidiendo
+    // continuar el entrenamiento»): closed with Escape once it has stood 3 s with no click of the player's for 20 s
+    // (the player's own pause, clicking in it, is theirs).
+    void watchEscapeMenu(DWORD now, bool on, DWORD& since, DWORD& toldAt)
+    {
+        cUI_Manager* ui = cUI_Manager::instance();
+        cUI_Window2* menu = ui && (ui->flags & cUI_Manager::inGame) && !(ui->flags & cUI_Manager::inMenus)
+                                ? ui->window(cUI_Manager::Window::escapeMenu)
+                                : nullptr;
+        const DWORD quiet = *static_cast<volatile DWORD*>(&g_quietUntil);
+        const bool playerNear = quiet && static_cast<int>(now - quiet) < 20000;
+        if (!on || !menu || !menu->visible() || playerNear)
+        {
+            since = 0;
+            return;
+        }
+        if (!since)
+        {
+            since = now;
+        }
+        else if (now - since > 3000 && now - toldAt > 3000 &&
+                 Act::allowed(Act::Kind::Windows, "close the game menu opened under the agent"))
+        {
+            toldAt = now;
+            LOG("AutoAttack: the game menu is open under the agent: closed (Escape)");
+            Inject::key(VK_ESCAPE, true);
+            Inject::key(VK_ESCAPE, false);
+        }
+    }
+
     void watchPortalBox()
     {
-        DWORD since = 0, toldAt = 0;
+        DWORD since = 0, toldAt = 0, menuSince = 0, menuToldAt = 0;
         for (;;)
         {
             Sleep(500);
             const bool on = *static_cast<volatile bool*>(&g_on);
+            watchEscapeMenu(GetTickCount(), on, menuSince, menuToldAt);
             if (!on || !UiNav::portalBoxOpen())
             {
                 since = 0;
@@ -8275,11 +8306,13 @@ void AutoAttack::onFrame()
     // Any other NPC dialog left open with the agent on (a quest's next page after the talk seemed over, a creature
     // clicked on the way): the first answer after 4 s, as the agent would otherwise stand there for good.
     static DWORD s_strayOpenAt = 0, s_strayAnswerAt = 0;
+    static int s_strayAnswers = 0;
     if (g_on && !s_answers && UiNav::npcDialogOpen() && static_cast<int>(now - g_craftHoldUntil) >= 0)
     {
         if (!s_strayOpenAt)
         {
             s_strayOpenAt = now;
+            s_strayAnswers = 0;
         }
         // The loot's clocks stand still meanwhile (seen live, 2026-11-09: a help page at the start cost the loot
         // gone for its 6 s, «not reached»).
@@ -8294,14 +8327,34 @@ void AutoAttack::onFrame()
             {
                 return;
             }
-            LOG("AutoAttack: an NPC dialog left open, answer 1 (Enter)");
             s_strayAnswerAt = now;
+            ++s_strayAnswers;
+            // The Enter that changes nothing (A4 and A8, 2026-11-15: 3 300 answers in 3 h, the stable's window open
+            // behind the dialog): after 3, the window behind it closed; after 6, Escape, as a player leaves a talk.
+            if (s_strayAnswers > 3 && Gear::closeStrayHorseWindow(true))
+            {
+                LOG("AutoAttack: an NPC dialog that the Enter does not close: the stable's window behind it closed");
+                return;
+            }
+            if (s_strayAnswers > 6)
+            {
+                LOG("AutoAttack: an NPC dialog that the Enter does not close ({} answers): Escape", s_strayAnswers);
+                Inject::key(VK_ESCAPE, true);
+                Inject::key(VK_ESCAPE, false);
+                return;
+            }
+            LOG("AutoAttack: an NPC dialog left open, answer 1 (Enter)");
             Inject::key(VK_RETURN, true);
             Inject::key(VK_RETURN, false);
         }
         return;
     }
     s_strayOpenAt = 0;
+    // The stable's window left open with no horse wanted and no dialog over it: closed after 4 s.
+    if (g_on && Act::may(Act::Kind::Windows))
+    {
+        Gear::closeStrayHorseWindow();
+    }
     if (s_answers && !UiNav::npcDialogOpen() && static_cast<int>(now - s_answerAt) > 900)
     {
         if (g_collecting && g_target)
@@ -8482,7 +8535,9 @@ void AutoAttack::onFrame()
                 g_shopId);
         }
         LOG("AutoAttack: shop of {:x} closed, back to play", g_shopId);
-        if (Act::allowed(Act::Kind::Windows, "close the shop (Esc): the trip is over"))
+        // Escape only while the shop is still open: with none open it brings up the game menu, which holds the
+        // whole game (A7, 2026-11-15: the pause menu after «Tienda o artesano»).
+        if (Gear::shopOpen() && Act::allowed(Act::Kind::Windows, "close the shop (Esc): the trip is over"))
         {
             Inject::key(VK_ESCAPE, true);
             Inject::key(VK_ESCAPE, false);

@@ -50,6 +50,8 @@ namespace Gear
     // True once after a trip that left the backpack full: that merchant did not deal in what the hero carries.
     bool tripLeftFull();
     bool shopOpen();
+    // The stable's window open with no horse wanted: closed after 4 s (or at once with `now`); true when it closed it.
+    bool closeStrayHorseWindow(bool now = false);
     // A combo master's window open (its runes' page shows the inventory beside it: not to be closed meanwhile).
     bool craftsmanOpen();
 

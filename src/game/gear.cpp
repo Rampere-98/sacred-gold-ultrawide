@@ -2414,13 +2414,14 @@ namespace
                 gems.push_back(id);
                 return;
             }
-            if (freeSockets(id) > 0)
+            // Only a base the hero would wear (the player, 2026-11-15: «mejora todo tipo de equipamiento, mismo aquella
+            // que ni puede equiparse»): gems spent on something it cannot put on are wasted.
+            if (freeSockets(id) > 0 && bestSlot(hero, id, 0.0f) >= 0)
             {
-                const bool worn = bestSlot(hero, id, 0.0f) >= 0;
-                if (!base || (worn && !baseWorn))
+                if (!base || !baseWorn)
                 {
                     base = id;
-                    baseWorn = worn;
+                    baseWorn = true;
                 }
             }
         });
@@ -3183,6 +3184,35 @@ bool Gear::tripDone()
     g_tripDone = false;
     g_tripShop = false;
     g_closeShop = true;
+    return true;
+}
+
+bool Gear::closeStrayHorseWindow(bool now)
+{
+    // The stable's window left open with no horse wanted (A4 and A8, 2026-11-15: open behind an NPC dialog for hours;
+    // the dialog's Enter went nowhere, 3 300 answers). Closed after 4 s, or at once when asked.
+    static DWORD s_since = 0;
+    const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
+    uint8_t* w = ui ? *reinterpret_cast<uint8_t* const*>(ui + 0xC4) : nullptr;
+    if (!w || *reinterpret_cast<const uintptr_t*>(w) != kHorseVtable || !(*reinterpret_cast<const uint32_t*>(w + 0x10) & 1) ||
+        g_wantHorse)
+    {
+        s_since = 0;
+        return false;
+    }
+    const DWORD tick = GetTickCount();
+    if (!s_since)
+    {
+        s_since = tick;
+    }
+    if (!now && tick - s_since < 4000)
+    {
+        return false;
+    }
+    using ClearFlags = void(__fastcall*)(uint8_t* window, void*, uint32_t bits);
+    fn<ClearFlags>(0x7325C0)(w, nullptr, 1);
+    s_since = 0;
+    LOG("Gear: the stable's window was left open with no horse wanted: closed");
     return true;
 }
 
