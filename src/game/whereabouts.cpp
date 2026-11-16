@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <cstdlib>
+#include <unordered_set>
 #include <vector>
 
 namespace
@@ -14,6 +15,59 @@ namespace
     Whereabouts::Area g_area;
     std::vector<uint8_t> g_reached;     // kSide*kSide, 1 reached
     DWORD g_fillAt = 0;
+
+    // The same flood without the window, for an area that looked open only because the window ended (the stuck
+    // solver, 2026-11-16, A5: the cave 5.2 is 97 tiles wide and the window 129; from x < 5350 or x > 5380 its far end
+    // is cut off by the window and the fill says «open ground»: 43 of 43 verdicts inside the cave were open outside
+    // that band, 0 inside it; the hero sat in the west chamber for 36 h with every shut-in rule asleep). Up to 6000
+    // tiles; any unknown tile ends it as open (not known to be shut).
+    bool closedBeyondWindow(int layer, int hx, int hy, int& total, int& minX, int& maxX, int& minY, int& maxY)
+    {
+        constexpr size_t kCap = 6000;
+        const auto key = [](int x, int y) {
+            return (static_cast<uint64_t>(static_cast<uint32_t>(x)) << 32) | static_cast<uint32_t>(y);
+        };
+        std::unordered_set<uint64_t> seen;
+        std::vector<std::pair<int, int>> queue;
+        seen.insert(key(hx, hy));
+        queue.emplace_back(hx, hy);
+        minX = maxX = hx;
+        minY = maxY = hy;
+        static const int kDx[4] = {1, -1, 0, 0}, kDy[4] = {0, 0, 1, -1};
+        for (size_t i = 0; i < queue.size(); ++i)
+        {
+            const auto [x, y] = queue[i];
+            for (int d = 0; d < 4; ++d)
+            {
+                const int nx = x + kDx[d], ny = y + kDy[d];
+                if (seen.count(key(nx, ny)))
+                {
+                    continue;
+                }
+                const int w = ClickWalk::walkable(layer, nx, ny);
+                if (w < 0)
+                {
+                    return false;
+                }
+                if (!w)
+                {
+                    continue;
+                }
+                if (queue.size() >= kCap)
+                {
+                    return false;
+                }
+                seen.insert(key(nx, ny));
+                queue.emplace_back(nx, ny);
+                minX = std::min(minX, nx);
+                maxX = std::max(maxX, nx);
+                minY = std::min(minY, ny);
+                maxY = std::max(maxY, ny);
+            }
+        }
+        total = static_cast<int>(queue.size());
+        return true;
+    }
 
     void fill(int layer, int hx, int hy)
     {
@@ -26,6 +80,7 @@ namespace
         a.minX = a.maxX = hx;
         a.minY = a.maxY = hy;
         bool open = false;
+        bool unknownSeen = false;   // a tile beyond the loaded sectors: the window cannot be widened to decide
         std::vector<int> queue;
         queue.reserve(kSide * kSide);
         const int start = Whereabouts::kRadius * kSide + Whereabouts::kRadius;
@@ -58,6 +113,7 @@ namespace
                 if (w < 0)
                 {
                     open = true;    // beyond the loaded sectors: not known to be shut
+                    unknownSeen = true;
                     continue;
                 }
                 if (w)
@@ -65,6 +121,21 @@ namespace
                     g_reached[n] = 1;
                     queue.push_back(n);
                 }
+            }
+        }
+        // Open only for the window's edge (not for unknown ground): the flood goes on past the window; if it ends
+        // inside 6000 tiles the area is shut in whatever the hero's place in it.
+        if (open && !unknownSeen && a.tiles > 1 && a.tiles < 4000)
+        {
+            int total = 0, loX = a.minX, hiX = a.maxX, loY = a.minY, hiY = a.maxY;
+            if (closedBeyondWindow(layer, hx, hy, total, loX, hiX, loY, hiY))
+            {
+                open = false;
+                a.tiles = total;
+                a.minX = loX;
+                a.maxX = hiX;
+                a.minY = loY;
+                a.maxY = hiY;
             }
         }
         // The hero's own tile not walkable by the test (standing on an object's edge): no verdict.
