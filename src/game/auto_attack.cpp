@@ -3633,6 +3633,19 @@ namespace
             static bool s_journalRead = false;  // this run read the journal before (a failure is a change since)
             const bool readBefore = s_journalRead;
             s_journalRead = true;
+            // The quests failed since the last read: those, not the one followed (the quests' session, 2026-11-16,
+            // docs/Misiones-tope-40.md §3: A2 «gave up» main quest 44, which cannot fail, four times today for a side
+            // quest failed meanwhile).
+            static std::vector<int32_t> s_failedSeen;
+            std::vector<int32_t> newlyFailed;
+            for (const int32_t number : failedNumbers)
+            {
+                if (std::find(s_failedSeen.begin(), s_failedSeen.end(), number) == s_failedSeen.end())
+                {
+                    newlyFailed.push_back(number);
+                }
+            }
+            s_failedSeen = failedNumbers;
             if ((done != g_questsDone || failed != g_questsFailed) && (g_questsDone || g_questsFailed || done || failed))
             {
                 LOG("AutoAttack: the journal moved on ({} done, {} failed): anyone may be spoken to again", done, failed);
@@ -3646,11 +3659,14 @@ namespace
                 // than this run read before, not the first read of a run nor right after a load.
                 if (readBefore && failed == g_questsFailed + 1 && !AgentSave::worldChanging())
                 {
-                    if (g_followedNumber > 0 &&
-                        std::find(g_givenUpQuests.begin(), g_givenUpQuests.end(), g_followedNumber) == g_givenUpQuests.end())
+                    for (const int32_t number : newlyFailed)
                     {
-                        g_givenUpQuests.push_back(g_followedNumber);
-                        LOG("AutoAttack: quest {} failed while followed: left for this run", g_followedNumber);
+                        if (std::find(g_givenUpQuests.begin(), g_givenUpQuests.end(), number) == g_givenUpQuests.end())
+                        {
+                            g_givenUpQuests.push_back(number);
+                            LOG("AutoAttack: quest {} failed{}: left for this run", number,
+                                number == g_followedNumber ? " while followed" : "");
+                        }
                     }
                     // A quest's failure is paid for once (the live verifier, 2026-11-13: A7's quest with a deadline
                     // failed 3-7 min after every load, 30 failures and 14 «deaths» in 45 min, its level 11 save set
@@ -4942,6 +4958,7 @@ namespace
     struct DoorNearGoal
     {
         int32_t goalX, goalY;
+        double tiles;
     };
 
     bool acceptDoorNearGoal(uint32_t id, void* context)
@@ -4953,16 +4970,23 @@ namespace
         const auto* g = static_cast<const DoorNearGoal*>(context);
         cObjectManager* objects = cObjectManager::instance();
         const cObject* o = objects ? objects->object(id) : nullptr;
-        return o && std::hypot(static_cast<double>(o->x - g->goalX), static_cast<double>(o->y - g->goalY)) <= 8.0 * kTileSize;
+        return o && std::hypot(static_cast<double>(o->x - g->goalX), static_cast<double>(o->y - g->goalY)) <= g->tiles * kTileSize;
     }
 
     bool doorNearGoal(DWORD now, int32_t x, int32_t y)
     {
-        DoorNearGoal goal{x, y};
+        // Within 8 tiles of the goal first; then 30, a castle's gate far from the one inside (the quests' session,
+        // 2026-11-16, docs/Misiones-tope-40.md: Baron DeMordrey at 1676,2352, the castle's way in 29 tiles off).
+        DoorNearGoal goal{x, y, 8.0};
         const float range = g_doorRange;
         g_doorRange = 30.0f * kTileSize;
         AimAssist::Target door;
-        const bool found = AimAssist::findObject(g_doorRange, &acceptDoorNearGoal, &goal, door);
+        bool found = AimAssist::findObject(g_doorRange, &acceptDoorNearGoal, &goal, door);
+        if (!found)
+        {
+            goal.tiles = 30.0;
+            found = AimAssist::findObject(g_doorRange, &acceptDoorNearGoal, &goal, door);
+        }
         g_doorRange = range;
         if (!found)
         {
@@ -4992,7 +5016,8 @@ namespace
         const int gx = static_cast<int>(x / kTileSize), gy = static_cast<int>(y / kTileSize);
         const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
         // Only from near the goal (the stuck solver, 2026-11-13: fired 50 tiles off and on horseback, A1).
-        if (std::hypot(gx - htx, gy - hty) > 25.0)
+        // From the surface up to 40 (the quests' session, 2026-11-16: the baron's castle, its way in 29 tiles from him).
+        if (std::hypot(gx - htx, gy - hty) > (layer == 0 ? 40.0 : 25.0))
         {
             return false;
         }
@@ -5003,9 +5028,16 @@ namespace
             return false;
         }
         std::vector<std::pair<int, int>> ways = MapMemory::waysOut(layer, gx, gy, 10, true);
+        // None within 10 tiles from the surface: a building's way in may be far from what is inside (docs/Misiones-
+        // tope-40.md, fix A.1: 35 tiles).
+        const int reach = layer == 0 && ways.empty() ? 35 : 10;
+        if (reach > 10)
+        {
+            ways = MapMemory::waysOut(layer, gx, gy, reach, true);
+        }
         for (const Teleports::Interior& in : Teleports::interiors())
         {
-            if (!in.start && layer == 0 && std::abs(in.outX - gx) <= 10 && std::abs(in.outY - gy) <= 10)
+            if (!in.start && layer == 0 && std::abs(in.outX - gx) <= reach && std::abs(in.outY - gy) <= reach)
             {
                 // A cave's way in is the script's zone beside the landing (Manolito, block BE: cave 2.3, landing
                 // 3042,2892, zone 3047,2892), the one the agent goes for.
