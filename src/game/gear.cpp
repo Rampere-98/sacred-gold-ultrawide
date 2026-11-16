@@ -1326,6 +1326,82 @@ namespace
         return kind == 3 || kind == 7 || kind == 12;
     }
 
+    // Every weapon slot a style and an element of its own (the player, 2026-11-16: «si en una ranura tiene daño a
+    // distancia, no puede usar otra ranura para daño a distancia, la misma regla para las otras categorías [...] su
+    // elemento [...] el agente decide pero con el criterio de que no puede repetir»). The style by the game's
+    // weapon-info subclass (HeroProfile::itemWeaponKind): 0 ranged (throwing, bow, crossbow, gun), 1 staff or spear,
+    // 2 two-handed (subclass 2 or the game's own two-hand test), 3 one-handed. -1: no weapon.
+    int styleOf(uint32_t id)
+    {
+        const uint8_t kind = id ? HeroProfile::itemWeaponKind(id) : 0;
+        if (!kind)
+        {
+            return -1;
+        }
+        if (HeroProfile::rangedKind(kind))
+        {
+            return 0;
+        }
+        if (kind == 4)
+        {
+            return 1;
+        }
+        return kind == 2 || twoHanded(id) ? 2 : 3;
+    }
+
+    const char* styleName(int st)
+    {
+        static const char* const names[] = {"ranged", "staff/spear", "two-handed", "one-handed"};
+        return st >= 0 && st < 4 ? names[st] : "none";
+    }
+
+    // A slot's weapon: the hand that holds one (the weapon hand first; a shield is none).
+    uint32_t slotWeapon(const uint8_t* pack, int slot)
+    {
+        for (int hand : {1, 0})
+        {
+            const uint32_t id = slotItem(pack, slot, hand);
+            if (styleOf(id) >= 0)
+            {
+                return id;
+            }
+        }
+        return 0;
+    }
+
+    // The elements (the game's four damage kinds: physical, fire, magic, poison; lightning is magic in Sacred) the
+    // open slots other than `except` hold, and their styles.
+    void slotsTaken(const uint8_t* pack, int open, int except, bool styles[4], bool elements[4])
+    {
+        for (int slot = 0; slot < open; ++slot)
+        {
+            const uint32_t w = slot == except ? 0 : slotWeapon(pack, slot);
+            if (const int st = styleOf(w); st >= 0)
+            {
+                styles[st] = true;
+            }
+            if (const int el = mainKind(w); el >= 0)
+            {
+                elements[el] = true;
+            }
+        }
+    }
+
+    std::string takenText(const bool styles[4], const bool elements[4])
+    {
+        std::string out;
+        for (int k = 0; k < 4; ++k)
+        {
+            out += styles[k] ? std::string(styleName(k)) + " " : "";
+        }
+        out += "/ ";
+        for (int k = 0; k < 4; ++k)
+        {
+            out += elements[k] ? std::string(kindName(k)) + " " : "";
+        }
+        return out;
+    }
+
     // Fighting from afar (the player, 2026-11-11: «las armas con mayor distancia de rango son para atacar desde lo más
     // lejos posible»): the best ranged weapon of the backpack into an empty weapon slot. First for the classes whose
     // skills are with them (Wood Elf, Dwarf); the others keep one too once they have three slots, for an enemy out of
@@ -1376,9 +1452,16 @@ namespace
         uint32_t best = 0;
         float bestScore = 0.0f;
         int seen = 0;
+        // No element another slot has (the player, 2026-11-16: no slot repeats another's style or element).
+        bool takenStyles[4] = {}, takenElements[4] = {};
+        slotsTaken(pack, open, empty >= 0 ? empty : (active == 0 ? 1 : 0), takenStyles, takenElements);
         eachItem(pack, [&](uint32_t id, int, int, int) {
             const uint32_t type = typeOf(id);
             if ((flagsOf(id) & kQuestItem) || !type || !types || !HeroProfile::rangedKind(HeroProfile::itemWeaponKind(id)))
+            {
+                return;
+            }
+            if (const int el = mainKind(id); el >= 0 && takenElements[el])
             {
                 return;
             }
@@ -1500,27 +1583,46 @@ namespace
         }
         const int open = slotsOpen(hero);
         const int active = *reinterpret_cast<const uint16_t*>(pack + kActiveSlot);
+        // The slot to fill: the first empty one not in use; else, of two that repeat a style or an element, the weaker
+        // one not in use (its weapons back to the backpack once a distinct one is found for it).
         int empty = -1;
-        bool have[4] = {};
-        for (int slot = 0; slot < open; ++slot)
+        std::string repeats;
+        for (int slot = 0; slot < open && empty < 0; ++slot)
         {
-            const uint32_t a = slotItem(pack, slot, 0), b = slotItem(pack, slot, 1);
-            if (!a && !b && slot != active && empty < 0)
+            if (!slotItem(pack, slot, 0) && !slotItem(pack, slot, 1) && slot != active)
             {
                 empty = slot;
             }
-            for (uint32_t id : {a, b})
+        }
+        for (int a = 0; a < open && empty < 0; ++a)
+        {
+            for (int b = a + 1; b < open && empty < 0; ++b)
             {
-                if (const int k = mainKind(id); k >= 0)
+                const uint32_t wa = slotWeapon(pack, a), wb = slotWeapon(pack, b);
+                const bool sameStyle = wa && wb && styleOf(wa) == styleOf(wb);
+                const bool sameElement = wa && wb && mainKind(wa) >= 0 && mainKind(wa) == mainKind(wb);
+                if (!sameStyle && !sameElement)
                 {
-                    have[k] = true;
+                    continue;
                 }
+                int weak = worth(wa).score < worth(wb).score ? a : b;
+                weak = weak == active ? (weak == a ? b : a) : weak;
+                if (weak == active)
+                {
+                    continue;
+                }
+                empty = weak;
+                repeats = std::format("repeats slot {}'s {} ({} {})", (weak == a ? b : a) + 1,
+                                      sameStyle ? "style" : "element",
+                                      sameStyle ? styleName(styleOf(wa)) : "", sameElement ? kindName(mainKind(wa)) : "");
             }
         }
         if (empty < 0)
         {
             return false;
         }
+        bool takenStyles[4] = {}, takenElements[4] = {};
+        slotsTaken(pack, open, empty, takenStyles, takenElements);
         void* types = typeMgr();
         uint32_t best = 0;
         float bestScore = 0.0f;
@@ -1535,12 +1637,13 @@ namespace
             {
                 return;
             }
-            const int kind = mainKind(id);
-            if (kind < 0)
+            // Neither a style nor an element another slot has: of those, the most damage (the item's worth).
+            const int kind = mainKind(id), style = styleOf(id);
+            if (kind < 0 || style < 0 || takenStyles[style] || takenElements[kind])
             {
                 return;
             }
-            const float score = worth(id).score * (have[kind] ? 1.0f : 3.0f);   // a new kind first
+            const float score = worth(id).score;
             if (!best || score > bestScore)
             {
                 best = id;
@@ -1549,7 +1652,53 @@ namespace
         });
         if (!best)
         {
+            static DWORD s_toldAt[5] = {};
+            if (!s_toldAt[empty] || GetTickCount() - s_toldAt[empty] > 600000)
+            {
+                s_toldAt[empty] = GetTickCount() | 1;
+                LOG("Gear: weapon slot {}: nothing distinct in the backpack{}{} (taken: {})", empty + 1,
+                    repeats.empty() ? "" : ", it ", repeats, takenText(takenStyles, takenElements));
+            }
             return false;
+        }
+        if (!repeats.empty())
+        {
+            // The repeating slot's weapons back to the backpack, both hands, as the game's own drops; none lost.
+            uint32_t old[2] = {slotItem(pack, empty, 0), slotItem(pack, empty, 1)};
+            int sizes[2][2] = {};
+            uint16_t cell = 0;
+            for (int hand = 0; hand < 2; ++hand)
+            {
+                if (old[hand] && (!sizeOf(old[hand], sizes[hand][0], sizes[hand][1]) ||
+                                  !fn<FindFree>(g_findFree)(pack, nullptr, sizes[hand][0], sizes[hand][1], &cell, 0)))
+                {
+                    return false;   // no room for it
+                }
+            }
+            for (uint32_t hand : {0u, 1u})
+            {
+                if (old[hand])
+                {
+                    fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(empty), hand, 0, 1);
+                }
+            }
+            if (slotItem(pack, empty, 0) || slotItem(pack, empty, 1))
+            {
+                LOG("Gear: weapon slot {} would not give its weapons back: the slots left alone", empty + 1);
+                g_slotsReady = false;
+                return false;
+            }
+            for (int hand = 0; hand < 2; ++hand)
+            {
+                if (old[hand])
+                {
+                    uint16_t free = 0;
+                    fn<FindFree>(g_findFree)(pack, nullptr, sizes[hand][0], sizes[hand][1], &free, 0);
+                    fn<PutItem>(g_putItem)(pack, nullptr, free, old[hand], sizes[hand][0], sizes[hand][1], 1);
+                }
+            }
+            LOG("Gear: weapon slot {} {}: its weapons back to the backpack for {:x} ({}, {})", empty + 1, repeats,
+                best, styleName(styleOf(best)), kindName(mainKind(best)));
         }
         // The hand the game's test gives (4: the other one, a bow's; A7, 2026-11-14), and only a free one. A weapon
         // refused is left for 10 minutes, the slots not given up for it.
@@ -1582,7 +1731,9 @@ namespace
             g_slotsReady = false;
             return false;
         }
-        LOG("Gear: weapon {:x} ({}) put in weapon slot {} of {}", best, kindName(mainKind(best)), empty + 1, open);
+        LOG("Gear: weapon {:x} put in weapon slot {} of {}: {}, {}, worth {:.0f} (the most damage of those that repeat no "
+            "other slot's style or element; taken: {})", best, empty + 1, open, styleName(styleOf(best)),
+            kindName(mainKind(best)), bestScore, takenText(takenStyles, takenElements));
         return true;
     }
 
