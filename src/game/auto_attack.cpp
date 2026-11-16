@@ -8336,12 +8336,18 @@ void AutoAttack::onFrame()
                 LOG("AutoAttack: an NPC dialog that the Enter does not close: the stable's window behind it closed");
                 return;
             }
-            if (s_strayAnswers > 6)
+            // Escape three times at most (it could bring up the game menu instead, which its own watcher closes with
+            // Escape too: the two must not take turns for good); then the dialog is left and answered every 30 s.
+            if (s_strayAnswers > 6 && s_strayAnswers <= 9)
             {
                 LOG("AutoAttack: an NPC dialog that the Enter does not close ({} answers): Escape", s_strayAnswers);
                 Inject::key(VK_ESCAPE, true);
                 Inject::key(VK_ESCAPE, false);
                 return;
+            }
+            if (s_strayAnswers > 9)
+            {
+                s_strayAnswerAt = now + 27000;
             }
             LOG("AutoAttack: an NPC dialog left open, answer 1 (Enter)");
             Inject::key(VK_RETURN, true);

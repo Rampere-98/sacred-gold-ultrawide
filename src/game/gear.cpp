@@ -3194,13 +3194,20 @@ bool Gear::closeStrayHorseWindow(bool now)
     static DWORD s_since = 0;
     const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
     uint8_t* w = ui ? *reinterpret_cast<uint8_t* const*>(ui + 0xC4) : nullptr;
+    // Asked at once (a dialog over it the Enter does not close), even with a horse wanted: the agent opened it itself
+    // and the purchase cannot go on under the dialog; the want is dropped as after a failed try.
     if (!w || *reinterpret_cast<const uintptr_t*>(w) != kHorseVtable || !(*reinterpret_cast<const uint32_t*>(w + 0x10) & 1) ||
-        g_wantHorse)
+        (g_wantHorse && !now))
     {
         s_since = 0;
         return false;
     }
     const DWORD tick = GetTickCount();
+    if (now)
+    {
+        g_wantHorse = false;
+        g_horseTriedAt = tick;
+    }
     if (!s_since)
     {
         s_since = tick;
