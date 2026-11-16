@@ -1690,11 +1690,12 @@ namespace
                 return;
             }
             ++seen;
-            if (!fn<CanUse>(g_canUse)(hero, nullptr, id, 0) || styleOf(id) != 0 || !ownClassOnly(hero, id))
+            if (!fn<CanUse>(g_canUse)(hero, nullptr, id, 0) || styleOf(id) != 0)
             {
                 return;
             }
-            const float score = worth(id).score;
+            // The hero's class's own first (option 2): above any common one.
+            const float score = worth(id).score + (ownClassOnly(hero, id) ? 1e6f : 0.0f);
             if (!best || score > bestScore)
             {
                 best = id;
@@ -1974,6 +1975,7 @@ namespace
         {
             int slot;
             std::string repeats;
+            bool ownOnly = false;   // filled again only for a weapon of the hero's class alone
         };
         std::vector<Target> targets;
         for (int slot = 0; slot < open; ++slot)
@@ -2007,8 +2009,9 @@ namespace
                                                      sameElement ? elementName(slotElement(wa)) : "")});
             }
         }
-        // A weapon not of the hero's class alone, in a slot not in use: given back for one that is (in the agents'
-        // copies any slot, the ones it filled before a restart too; in the player's folder only those it filled).
+        // A weapon not of the hero's class alone, in a slot not in use: given back for one that is, when there is one
+        // (the player, 2026-11-16, option 2: «exclusiva cuando la tenga y, si no, un arma normal de esa categoría»; in
+        // the agents' copies any slot, the ones it filled before a restart too; in the player's folder only those).
         for (int slot = 0; slot < open; ++slot)
         {
             const uint32_t w = slotWeapon(pack, slot);
@@ -2017,7 +2020,7 @@ namespace
             {
                 continue;
             }
-            targets.push_back({slot, "not a weapon of the hero's class alone"});
+            targets.push_back({slot, "not a weapon of the hero's class alone", true});
         }
         if (targets.empty())
         {
@@ -2025,8 +2028,11 @@ namespace
         }
         void* types = typeMgr();
         // Of the backpack's weapons with neither a style nor an element another slot has, the one worth most.
-        const auto distinct = [&](const bool styles[5], const bool elements[5], float& bestScore) {
-            uint32_t best = 0;
+        // The hero's class's own first: one of them however it scores against a common one; a common one only with
+        // none of its own and the slot not waiting for one (ownOnly).
+        const auto distinct = [&](const bool styles[5], const bool elements[5], float& bestScore, bool ownOnly) {
+            uint32_t best = 0, own = 0;
+            float ownScore = 0.0f;
             eachItem(pack, [&](uint32_t id, int, int, int) {
                 const uint32_t type = typeOf(id);
                 if (const auto t = g_noPutOn.find(id); t != g_noPutOn.end() && GetTickCount() - t->second < 600000)
@@ -2039,18 +2045,31 @@ namespace
                     return;
                 }
                 const int kind = slotElement(id), style = styleOf(id);
-                if (kind < 0 || style < 0 || styles[style] || elements[kind] || !ownClassOnly(hero, id))
+                if (kind < 0 || style < 0 || styles[style] || elements[kind])
                 {
                     return;
                 }
                 const float score = worth(id).score;
-                if (!best || score > bestScore)
+                if (ownClassOnly(hero, id))
+                {
+                    if (!own || score > ownScore)
+                    {
+                        own = id;
+                        ownScore = score;
+                    }
+                }
+                else if (!best || score > bestScore)
                 {
                     best = id;
                     bestScore = score;
                 }
             });
-            return best;
+            if (own)
+            {
+                bestScore = ownScore;
+                return own;
+            }
+            return ownOnly ? 0u : best;
         };
         uint32_t best = 0;
         float bestScore = 0.0f;
@@ -2062,7 +2081,7 @@ namespace
             bool styles[5] = {}, elements[5] = {};
             slotsTaken(pack, open, t.slot, styles, elements);
             float score = 0.0f;
-            if (const uint32_t id = distinct(styles, elements, score))
+            if (const uint32_t id = distinct(styles, elements, score, t.ownOnly))
             {
                 best = id;
                 bestScore = score;
