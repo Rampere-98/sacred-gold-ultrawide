@@ -5356,6 +5356,7 @@ namespace
         uint64_t goal = ~0ull;      // the goal (in 4-tile squares) the choice was made for
         DWORD since = 0;            // armed at
         DWORD onTileSince = 0;      // on the portal's tile since (0: not)
+        DWORD farAt = 0;            // the hero last more than 60 tiles from the portal (the 10 min count from there)
     };
     PortalTrip g_portalTrip;
     std::unordered_map<int, DWORD> g_portalLeftUntil;   // portal id -> not used again before this tick
@@ -5435,10 +5436,25 @@ namespace
                 g_portalTrip.onTileSince = 0;
                 g_portalTrip.goal = ~0ull;  // the goal weighed again with this portal
             }
+            else if (const double more = std::hypot(htx - ftx, hty - fty) + std::hypot(ftx - gtx, fty - gty) -
+                                         std::hypot(htx - gtx, hty - gty);
+                     more > 90.0)
+            {
+                // The goal changed and the portal is no longer on the way: left for another time (tried again).
+                LOG("AutoAttack: portal {}: not joined, {:.0f} tiles out of the way to the goal now at {},{}", from, more,
+                    gtx, gty);
+                g_portalJoinTried &= ~(1u << from);
+                Portals::disarm();
+                g_portalTrip.onTileSince = 0;
+            }
             if (Portals::armedFrom() >= 0)
             {
                 const DWORD clicked = Portals::clickedAt();
-                if (now - g_portalTrip.since > 600000)
+                if (std::hypot(htx - ftx, hty - fty) > 60.0)
+                {
+                    g_portalTrip.farAt = now;
+                }
+                if (now - std::max(g_portalTrip.since, g_portalTrip.farAt) > 600000)
                 {
                     portalGiveUp(now, "not there in 10 min");
                     return false;
@@ -5505,6 +5521,7 @@ namespace
                     joinId, ftx, fty, std::hypot(htx - ftx, hty - fty), extra, gtx, gty, Portals::joined());
                 g_portalTrip.since = now;
                 g_portalTrip.onTileSince = 0;
+                g_portalTrip.farAt = 0;
                 Portals::arm(joinId, -1);
                 px = tileMiddle(ftx);
                 py = tileMiddle(fty);
@@ -5582,6 +5599,7 @@ namespace
             walkNet > 0.0f ? " by the net" : " as the crow flies", g_hirelings.size());
         g_portalTrip.since = now;
         g_portalTrip.onTileSince = 0;
+        g_portalTrip.farAt = 0;
         Portals::arm(plan.from, plan.to);
         px = tileMiddle(ftx);
         py = tileMiddle(fty);
