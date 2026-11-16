@@ -47,5 +47,9 @@ put('AutoAttack', 'HumanCursor', '1')
 put('AgentSave', 'Enabled', '1')
 # Direct3D 9 on Direct3D 12 on every copy (the player, 2026-11-16: «pon DirectX 12 en todos»).
 put('DDraw', 'On12', '1')
+# The storage chest and the inventory's sort arrow on Auto in the copies (2 = Auto; Act reads [Permisos] by name).
+# The player's folder gets none of this: there every kind starts at No.
+put('Permisos', 'Storage', '2')
+put('Permisos', 'SortInventory', '2')
 put('Mind', 'Path', rf'C:\Users\silas\projects\sacred-bild\docs\Agente\Mente-a{index}.md')
 open(path, 'w', encoding='utf-8').write(text)
