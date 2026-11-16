@@ -6083,7 +6083,7 @@ namespace
         // The hero stays at the chest while the visit's work goes on (A4, 2026-11-16 20:37: a piece taken out, then
         // off to the combo master with the chest's window half done: it closed behind him, the chest still marked in
         // use). Gear ends the visit (closed, or 20 s with the window gone).
-        if (Gear::storageOpen() && !Gear::storagePending())
+        if (Gear::storageOpen() && !Gear::storagePending() && Act::may(Act::Kind::Storage))
         {
             setIntent(Intent::Shop, "at the storage chest: its work under way");
             g_roamAt = 0;

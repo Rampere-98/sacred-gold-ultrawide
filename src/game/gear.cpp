@@ -4012,7 +4012,7 @@ namespace
             if (Act::may(Act::Kind::Storage) && storageStep(hero, pack))
             {
             }
-            else if (buyHorse(hero))
+            else if (!g_storageId.load() && buyHorse(hero))
             {
             }
             else if (calm && !g_storageId.load() && g_wantCombo && makeCombo(hero))
@@ -4601,6 +4601,16 @@ void Gear::storageUsed(uint32_t id)
 
 bool Gear::storageOpen()
 {
+    // A hard end of its own (the reviewer, Q2): a visit whose work stopped (Act at No, the stop file, work() not
+    // running) never holds the hero longer than 2 minutes.
+    if (g_storageId.load() && GetTickCount() - g_storageAt.load() > 120000)
+    {
+        LOG("Gear: storage visit given up after 2 minutes with no end of its own");
+        g_storageId = 0;
+        g_storageDone = false;
+        g_storageShown = false;
+        return false;
+    }
     return g_storageId.load() != 0;
 }
 
