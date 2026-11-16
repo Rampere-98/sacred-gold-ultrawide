@@ -206,9 +206,20 @@ namespace
     // GetInfo): reading the pointers by hand here crashed every copy 35 s after loading (2026-11-16, DDRAW.dll+d801).
     constexpr uint16_t kStorageChest = 0x1450;
 
+    // The storage chest last seen (the one to go to when Gear wants it): its id, place and layer.
+    struct StorageSeen
+    {
+        uint32_t id = 0;
+        int32_t x = 0, y = 0;
+        int layer = -1;
+    };
+    StorageSeen g_storage;
+    std::atomic<int> g_destRegion{-1};
+
     void storageSeen(cObject* object)
     {
         static std::unordered_set<uint32_t> s_marked;
+        g_storage = {object->id, object->x, object->y, *(reinterpret_cast<const uint8_t*>(object) + 0x24)};
         if (!s_marked.insert(object->id).second)
         {
             return;
@@ -5660,6 +5671,60 @@ namespace
             g_roamStuck = 0;
             g_roamAngle = jitter(0, 628) / 100.0;
         }
+        // Where the hero is going, for Gear's pieces by zone: the quest goal's region, or the hero's own.
+        {
+            const uintptr_t holder = *reinterpret_cast<const uintptr_t*>(0xAD5C40);
+            const uint8_t* world = holder ? *reinterpret_cast<const uint8_t* const*>(holder) : nullptr;
+            const bool goal = g_questX || g_questY;
+            g_destRegion = sectorRegion(world, static_cast<int>((goal ? g_questX : self->x) / kTileSize),
+                                        static_cast<int>((goal ? g_questY : self->y) / kTileSize));
+        }
+        // The storage chest (the player, 2026-11-16: «consciencia del almacén [...] deberá contener equipamiento con
+        // resistencia a la zona donde van»): pieces to keep for other zones, or one to take out for where the hero is
+        // going (Gear::wantsStorage), and a storage chest seen within 40 tiles: gone to and used as a player does (a
+        // click on it); Gear moves the pieces while its window is open and closes it. Not before the merchant.
+        static DWORD s_storageFailedAt = 0, s_storageAskAt = 0, s_storageClickAt = 0;
+        static int s_storageTries = 0;
+        if (Gear::wantsStorage() && !Gear::storageOpen() && !Gear::wantsShop() && g_storage.id && g_storage.layer == layer &&
+            Act::may(Act::Kind::Storage) && (!s_storageFailedAt || now - s_storageFailedAt > 600000))
+        {
+            const double d = std::hypot(static_cast<double>(g_storage.x - self->x), static_cast<double>(g_storage.y - self->y));
+            if (d <= 40.0 * kTileSize)
+            {
+                setIntent(Intent::Shop, "pieces for the storage chest: to it");
+                if (d > 4.0 * kTileSize)
+                {
+                    if (!travel(now, self, g_storage.x, g_storage.y, s_storageAskAt))
+                    {
+                        LOG("AutoAttack: no way to the storage chest {:x}: left 10 min", g_storage.id);
+                        s_storageFailedAt = now;
+                    }
+                }
+                else if (!s_storageClickAt || now - s_storageClickAt > 3000)
+                {
+                    if (++s_storageTries > 5)
+                    {
+                        LOG("AutoAttack: the storage chest {:x} would not open: left 10 min", g_storage.id);
+                        s_storageFailedAt = now;
+                        s_storageTries = 0;
+                    }
+                    else if (Act::allowed(Act::Kind::Storage, "open the storage chest to keep or take pieces for a zone"))
+                    {
+                        LOG("AutoAttack: opening the storage chest {:x} (try {})", g_storage.id, s_storageTries);
+                        s_storageClickAt = now;
+                        Gear::storageUsed(g_storage.id);
+                        attack(g_storage.id);
+                    }
+                }
+                MapMemory::setRoute(true, g_storage.x, g_storage.y);
+                g_roamAt = 0;
+                return;
+            }
+        }
+        else if (!Gear::wantsStorage())
+        {
+            s_storageTries = 0;
+        }
         // The backpack full: off to the nearest merchant (however far, as to a quest), the shop opened with a click on
         // him as the player's; Gear sells and puts on the upgrades, then the agent closes it (onFrame).
         if (Gear::wantsShop() && !Gear::shopOpen())
@@ -9012,7 +9077,7 @@ void AutoAttack::onFrame()
         // Without the focus too (the stuck solver, 2026-11-13: the game opens it itself on a pick up, a chest, a
         // door; a copy without the focus never closed it, the key does nothing there: runs of 5-15).
         if (g_on && Act::may(Act::Kind::Windows) && inventory && inventory->visible() && !Gear::shopOpen() &&
-            !Gear::craftsmanOpen())
+            !Gear::craftsmanOpen() && !Gear::storageOpen())
         {
             if (!s_inventorySince)
             {
@@ -9247,6 +9312,11 @@ bool AutoAttack::canRide(Sacred::cCreature* hero, Sacred::cCreature* horse)
 void AutoAttack::footFor(unsigned long ms)
 {
     g_onFootUntil = GetTickCount() + ms;
+}
+
+int AutoAttack::destinationRegion()
+{
+    return g_destRegion.load();
 }
 
 bool AutoAttack::foughtWithin(unsigned long ms)

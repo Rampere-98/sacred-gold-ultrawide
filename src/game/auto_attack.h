@@ -17,6 +17,10 @@ namespace Sacred
 
 namespace AutoAttack
 {
+    // The region (Manolito, block BH 5: [sector+0x17C] +0xD7) of where the hero is going: its quest goal's tile, or
+    // its own with none; -1 not known. Any thread.
+    int destinationRegion();
+
     // Hooks it needs; call inside a Patch transaction.
     void install();
 

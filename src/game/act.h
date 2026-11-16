@@ -36,6 +36,7 @@ namespace Act
         SaveLoad,       // saving and loading the game
         Windows,        // closing windows (inventory, shop, portal box)
         Retreat,        // stepping back, dodging, fleeing
+        Storage,        // the town's storage chest: pieces for other zones put in and taken out
         Count
     };
 

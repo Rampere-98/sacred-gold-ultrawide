@@ -204,6 +204,118 @@ namespace
         return it == sets.end() ? -1 : it->second;
     }
 
+    // A piece's resistances (Manolito, block BH 4): its base at info+0x32..+0x38 (physical, fire, magic, poison) and the
+    // flat bonuses 0x321..0x324 with the mark 0x8000 (of 8 bonuses: marks u16 +0x3A+2i, id u16 +0x4A+4i, scale u8
+    // +0x4C+4i, strength s16 +0x6A+2i; scale 1-6 times an attribute's hundredth). The percentages and set bonuses left
+    // out (not seen on a real item yet).
+    void resistOf(const cCreature* hero, uint32_t id, float out[4])
+    {
+        std::fill(out, out + 4, 0.0f);
+        cObjectManager* objects = cObjectManager::instance();
+        cObject* item = objects && id ? objects->object(id) : nullptr;
+        const uint8_t* info = item && g_getInfo ? fn<GetInfo>(g_getInfo)(item, nullptr, -1) : nullptr;
+        if (!info)
+        {
+            return;
+        }
+        const auto* base = reinterpret_cast<const int16_t*>(info + 0x32);
+        for (int k = 0; k < 4; ++k)
+        {
+            out[k] = static_cast<float>(std::max<int16_t>(base[k], 0));
+        }
+        const uint8_t* st = hero ? reinterpret_cast<const uint8_t*>(hero) + kStats : nullptr;
+        static constexpr size_t kAttribute[7] = {0, 0x10, 0x14, 0x12, 0x16, 0x18, 0x1A};
+        for (int i = 0; i < 8; ++i)
+        {
+            const uint16_t marks = *reinterpret_cast<const uint16_t*>(info + 0x3A + 2 * i);
+            const uint16_t bonus = *reinterpret_cast<const uint16_t*>(info + 0x4A + 4 * i);
+            const uint8_t scale = info[0x4C + 4 * i];
+            const int16_t strength = *reinterpret_cast<const int16_t*>(info + 0x6A + 2 * i);
+            if (bonus < 0x321 || bonus > 0x324 || !(marks & 0x8000) || ((marks & 0xFF) != 0 && (marks & 0xFF) != 0x0D))
+            {
+                continue;
+            }
+            float v = strength;
+            if (scale >= 1 && scale <= 6 && st)
+            {
+                v = strength * *reinterpret_cast<const uint16_t*>(st + kAttribute[scale]) * 0.01f;
+            }
+            out[bonus - 0x321] += std::max(v, 0.0f);
+        }
+    }
+
+    // The damage each region's creatures deal, % physical / fire / magic / poison (Manolito, block BH 5:
+    // docs/Sacred/Regiones-dano.tsv, by how many of its sectors each creature kind fills: an order of magnitude).
+    constexpr int8_t kRegionDamage[][4] = {
+        {0, 0, 0, 0},
+        {91, 0, 3, 6},
+        {74, 1, 12, 14},
+        {54, 0, 27, 19},
+        {76, 0, 13, 12},
+        {79, 0, 4, 17},
+        {61, 0, 25, 14},
+        {72, 0, 10, 18},
+        {76, 0, 0, 24},
+        {73, 1, 2, 24},
+        {89, 6, 2, 4},
+        {70, 1, 17, 12},
+        {64, 0, 20, 16},
+        {28, 0, 38, 34},
+        {79, 9, 5, 6},
+        {71, 0, 2, 28},
+        {28, 0, 38, 34},
+        {50, 0, 40, 10},
+        {93, 0, 4, 3},
+        {0, 0, 0, 0},
+        {72, 0, 5, 23},
+        {72, 0, 5, 23},
+        {72, 0, 5, 23},
+        {0, 0, 0, 0},
+        {73, 0, 5, 22},
+        {20, 0, 80, 0},
+        {40, 0, 60, 0},
+        {0, 0, 0, 0},
+        {38, 0, 62, 0},
+        {0, 0, 0, 0},
+        {53, 0, 28, 19},
+        {70, 0, 8, 21},
+        {72, 3, 4, 21},
+        {55, 2, 4, 38},
+        {64, 1, 11, 24},
+        {0, 0, 0, 0},
+        {52, 0, 6, 42},
+        {42, 5, 12, 41},
+        {28, 1, 27, 44},
+        {16, 3, 75, 6},
+        {49, 6, 28, 18},
+        {70, 11, 15, 4},
+        {9, 0, 75, 16},
+        {33, 0, 17, 50},
+        {38, 0, 62, 0},
+        {0, 0, 0, 0},
+        {67, 0, 14, 18},
+        {0, 0, 0, 0},
+        {47, 0, 14, 39},
+        {84, 1, 0, 15},
+        {0, 0, 0, 0},
+        {50, 0, 0, 50},
+        {44, 16, 17, 22},
+        {51, 16, 16, 16},
+        {0, 0, 0, 0},
+        {47, 23, 15, 15},
+        {51, 13, 18, 18},
+        {0, 0, 0, 0},
+        {35, 19, 42, 5},
+        {34, 26, 29, 10},
+        {34, 26, 29, 10},
+        {51, 16, 16, 16},
+    };
+    // The zone's weight on each resistance for the equipping (the elements' shares of where the hero is going, once it
+    // has stayed the same a minute: no swinging as the goal flips); 0 while none.
+    std::atomic<int> g_zoneShare[4] = {};
+    std::atomic<int> g_zoneRegion{-1};
+    bool g_plainWorth = false;      // the storage's choice: a piece judged without the zone (for use everywhere)
+
     Worth worth(uint32_t id)
     {
         Worth w;
@@ -239,6 +351,18 @@ namespace
             w.weapon = damage > 0.0f;
             w.primary = w.weapon ? damage : defense;
             w.score = w.primary + w.mods;
+            // Where the hero is going: its elements' resistances count twice more by their share there (the player,
+            // 2026-11-16: «equipamiento con resistencia a la zona donde van»). The base resistance is in the armour
+            // already; physical is everywhere.
+            if (!w.weapon && !g_plainWorth && g_zoneRegion.load() >= 0)
+            {
+                float r[4];
+                resistOf(cObjectManager::instance() ? cObjectManager::instance()->hero() : nullptr, id, r);
+                for (int k = 1; k < 4; ++k)
+                {
+                    w.score += 2.0f * r[k] * static_cast<float>(g_zoneShare[k].load()) * 0.01f;
+                }
+            }
         }
         w.value = static_cast<float>(fn<GetValue>(g_getValue)(item, nullptr));
         return w;
@@ -583,7 +707,8 @@ namespace
     // backpack stayed full through 15 trips, «nothing more to sell», and the log did not say with what).
     // 0 quest item, 1 taken off lately, 2 for the smith, 3 rune, 4 an upgrade, 5 healing potion kept, 6 usable and not
     // worn (gems, scrolls...), 7 set piece, 8 no tab, 9 bought lately, 10 not allowed, 11 the merchant's tab is full.
-    int g_sellWhy[12] = {};
+    int g_sellWhy[13] = {};     // 12: kept for the storage chest
+    std::unordered_set<uint32_t> g_storageKeep;    // the pieces kept for other zones (backpack and storage)
     int g_sellSeen = 0, g_sellPotions = 0;
     bool healingType(uint32_t type);    // defined below
 
@@ -671,6 +796,11 @@ namespace
             {
                 ++g_sellWhy[9];
                 return;     // bought within the hour: not sold back at a loss
+            }
+            if (g_storageKeep.count(id))
+            {
+                ++g_sellWhy[12];
+                return;     // kept for the storage chest: a zone's resistance
             }
             if (!Act::allowed(Act::Kind::Sell, "sell what the hero does not use"))
             {
@@ -3208,6 +3338,288 @@ namespace
 
     std::atomic<bool> g_slotsDue{false};    // work() found nothing else to do: the slots, on the game's thread
 
+    // ---- The storage chest by zone (the player, 2026-11-16, docs/AGENT_ADDRESSES.md block BH) ----
+    constexpr int kStoreEntry = 0x11;   // the hero's storage, inventory entry 0x11 (every storage chest opens it)
+    constexpr size_t kChestWindow = 0xC0, kChestOpenedBy = 0x154;
+    using MoveItem = uint8_t(__fastcall*)(void* inv, void*, uint32_t from, uint32_t to, uint32_t id, uint32_t x);
+    constexpr uintptr_t kMoveItem = 0x5DECC0;
+
+    std::atomic<bool> g_wantStore{false}, g_wantTake{false};
+    std::atomic<uint32_t> g_storageId{0};       // the storage chest the agent used (0: no visit)
+    std::atomic<DWORD> g_storageAt{0};          // when it was used, then when the work in it was done
+    std::atomic<bool> g_storageDone{false};     // the work done: closing
+    DWORD g_storageVisitAt = 0;                 // the last visit (none wanted again for 10 min but for a new piece)
+    size_t g_storageKeptBefore = 0;
+    int g_storageCloseTries = 0;
+
+    // The first body slot a piece fits (its kind: two of each kind and element kept), -1 none.
+    int bodySlotOf(uint32_t id)
+    {
+        void* types = typeMgr();
+        const uint32_t type = typeOf(id);
+        for (int slot = 0; types && type && slot < kSlots; ++slot)
+        {
+            if (slot != 13 && fn<SlotAccepts>(g_slotAccepts)(types, nullptr, slot, type))
+            {
+                return slot;
+            }
+        }
+        return -1;
+    }
+
+    // The pieces worth keeping for other zones: no weapon (the slots keep those), for this class, not better than what
+    // the hero wears for everywhere (that one is put on instead), with a resistance to fire, magic or poison of 5 or
+    // more; the two best of each body slot and element, in the backpack and the storage together.
+    std::unordered_set<uint32_t> storageKeep(cCreature* hero, uint8_t* pack, uint8_t* store)
+    {
+        struct Piece
+        {
+            uint32_t id;
+            int key;
+            float resist;
+        };
+        std::vector<Piece> all;
+        g_plainWorth = true;
+        const auto consider = [&](uint32_t id, bool stored) {
+            if ((flagsOf(id) & kQuestItem) || worth(id).weapon || !fn<CanUse>(g_canUse)(hero, nullptr, id, 1))
+            {
+                return;
+            }
+            const int slot = bodySlotOf(id);
+            if (slot < 0)
+            {
+                return;
+            }
+            bool fits = false;
+            if (!stored && bestSlot(hero, id, 0.05f, nullptr, &fits) >= 0)
+            {
+                return;     // better than what is worn: put on, not stored
+            }
+            float r[4];
+            resistOf(hero, id, r);
+            int e = 1;
+            for (int k = 2; k < 4; ++k)
+            {
+                e = r[k] > r[e] ? k : e;
+            }
+            if (r[e] >= 5.0f)
+            {
+                all.push_back({id, slot * 4 + e, r[e]});
+            }
+        };
+        eachItem(pack, [&](uint32_t id, int, int, int) { consider(id, false); });
+        if (store)
+        {
+            eachItem(store, [&](uint32_t id, int, int, int) { consider(id, true); });
+        }
+        g_plainWorth = false;
+        std::sort(all.begin(), all.end(), [](const Piece& a, const Piece& b) {
+            return a.key != b.key ? a.key < b.key : a.resist > b.resist;
+        });
+        std::unordered_set<uint32_t> keep;
+        for (size_t i = 0, n = 0; i < all.size(); ++i)
+        {
+            n = i > 0 && all[i].key == all[i - 1].key ? n + 1 : 0;
+            if (n < 2)
+            {
+                keep.insert(all[i].id);
+            }
+        }
+        return keep;
+    }
+
+    // Where the hero is going, its region's elements as the equipping's weight, once the same a minute.
+    void zoneLook()
+    {
+        static int s_region = -1;
+        static DWORD s_since = 0;
+        const int region = AutoAttack::destinationRegion();
+        const DWORD now = GetTickCount();
+        if (region != s_region)
+        {
+            s_region = region;
+            s_since = now;
+            return;
+        }
+        if (region == g_zoneRegion.load() || now - s_since < 60000)
+        {
+            return;
+        }
+        const bool known = region >= 0 && region < static_cast<int>(std::size(kRegionDamage));
+        for (int k = 0; k < 4; ++k)
+        {
+            g_zoneShare[k] = known ? kRegionDamage[region][k] : 0;
+        }
+        g_zoneRegion = known ? region : -1;
+        if (known)
+        {
+            LOG("Gear: going to region {}: its creatures' damage {}% physical, {}% fire, {}% magic, {}% poison (the "
+                "script's table, BH 5; CombatLearn by region not yet): the equipping weighs those resistances",
+                region, kRegionDamage[region][0], kRegionDamage[region][1], kRegionDamage[region][2],
+                kRegionDamage[region][3]);
+        }
+    }
+
+    // The storage's window open on the chest the agent used, the chest itself a storage chest beside the hero (the
+    // game checks no distance: the agent does). Null otherwise: a window the player opened is never touched.
+    uint8_t* storageWindow(const cCreature* hero)
+    {
+        const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
+        uint8_t* w = ui ? *reinterpret_cast<uint8_t* const*>(ui + kChestWindow) : nullptr;
+        if (!w || IsBadReadPtr(w, 0x15C) || !(*reinterpret_cast<const uint32_t*>(w + 0x10) & 1))
+        {
+            return nullptr;
+        }
+        const uint32_t chest = *reinterpret_cast<const uint32_t*>(w + kChestOpenedBy);
+        cObjectManager* objects = cObjectManager::instance();
+        cObject* o = objects && chest ? objects->object(chest) : nullptr;
+        if (!o || chest != g_storageId.load() ||
+            *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(o) + 0x10) != 0x1450 ||
+            std::hypot(static_cast<double>(o->x - hero->x), static_cast<double>(o->y - hero->y)) > 5.0 * 53.66563)
+        {
+            return nullptr;
+        }
+        return w;
+    }
+
+    // The storage visit, a piece a pass (on the game's thread, as Gear's work): the kept pieces in, then the one
+    // better for where the hero goes out (the equipping puts it on), then the window closed as a player does, by
+    // closing the inventory (never the chest window's own onShow(0): by the code it opens again, BH 9).
+    bool storageStep(cCreature* hero, uint8_t* pack)
+    {
+        const DWORD now = GetTickCount();
+        static DWORD s_lookAt = 0;
+        uint8_t* store = entryOf(kStoreEntry);
+        if (!s_lookAt || now - s_lookAt > 10000)
+        {
+            s_lookAt = now | 1;
+            zoneLook();
+            g_storageKeep = storageKeep(hero, pack, store);
+            bool put = false, take = false;
+            eachItem(pack, [&](uint32_t id, int, int, int) { put = put || g_storageKeep.count(id); });
+            if (store && g_zoneRegion.load() >= 0)
+            {
+                eachItem(store, [&](uint32_t id, int, int, int) {
+                    take = take || (fn<CanUse>(g_canUse)(hero, nullptr, id, 0) && bestSlot(hero, id, 0.05f) >= 0);
+                });
+            }
+            const bool fresh = g_storageKeep.size() > g_storageKeptBefore;
+            g_wantStore = put && (!g_storageVisitAt || now - g_storageVisitAt > 600000 || fresh);
+            g_wantTake = take && (!g_storageVisitAt || now - g_storageVisitAt > 600000);
+        }
+        const uint32_t used = g_storageId.load();
+        if (!used)
+        {
+            return false;
+        }
+        uint8_t* w = storageWindow(hero);
+        if (!w)
+        {
+            // Not open (yet): given up after 20 s; once closed, the visit is over.
+            if (g_storageDone.load() || now - g_storageAt.load() > 20000)
+            {
+                cObjectManager* objects = cObjectManager::instance();
+                cObject* chest = objects ? objects->object(used) : nullptr;
+                const bool marked = chest && (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(chest) + 0x14) & 0x4000);
+                LOG("Gear: storage visit over ({}){}", g_storageDone.load() ? "closed" : "its window never opened",
+                    marked ? "; the chest still marked in use (0x4000)" : "");
+                g_storageId = 0;
+                g_storageDone = false;
+                g_storageVisitAt = now;
+                g_wantStore = false;
+                g_wantTake = false;
+                g_storageKeptBefore = g_storageKeep.size();
+            }
+            return false;
+        }
+        cObjectManager* objects = cObjectManager::instance();
+        void* inv = inventory();
+        const uint32_t heroIdx = hero->id & 0xFFFF;
+        if (!g_storageDone.load())
+        {
+            if (!Act::allowed(Act::Kind::Storage, "keep or take pieces for a zone in the storage chest"))
+            {
+                g_storageDone = true;
+                g_storageAt = now;
+                return false;
+            }
+            // One kept piece in.
+            uint32_t in = 0;
+            eachItem(pack, [&](uint32_t id, int, int, int) { in = !in && g_storageKeep.count(id) ? id : in; });
+            if (in)
+            {
+                float r[4];
+                resistOf(hero, in, r);
+                const bool moved = reinterpret_cast<MoveItem>(kMoveItem)(inv, nullptr, heroIdx, kStoreEntry, in, heroIdx) != 0;
+                LOG("Gear: storage: {:x} (type {:x}, resistances {:.0f}/{:.0f}/{:.0f}/{:.0f}) {}", in, typeOf(in), r[0],
+                    r[1], r[2], r[3], moved ? "put in, kept for a zone" : "not put in: no room in the storage");
+                if (moved)
+                {
+                    return true;
+                }
+            }
+            // One piece out, better for where the hero is going (the equipping puts it on after).
+            uint8_t* store = entryOf(kStoreEntry);
+            uint32_t out = 0;
+            if (store && g_zoneRegion.load() >= 0)
+            {
+                eachItem(store, [&](uint32_t id, int, int, int) {
+                    out = !out && fn<CanUse>(g_canUse)(hero, nullptr, id, 0) && bestSlot(hero, id, 0.05f) >= 0 ? id : out;
+                });
+            }
+            if (out)
+            {
+                using LocalPlayer = uintptr_t(__cdecl*)();
+                const uintptr_t local = reinterpret_cast<LocalPlayer>(0x7D84A0)();
+                const uint32_t player = local ? *reinterpret_cast<const uint32_t*>(local + 0x14) : heroIdx;
+                const bool moved = reinterpret_cast<MoveItem>(kMoveItem)(inv, nullptr, kStoreEntry, heroIdx, out, player) != 0;
+                LOG("Gear: storage: {:x} (type {:x}) {} for region {}", out, typeOf(out),
+                    moved ? "taken out, to wear" : "not taken out: no room in the backpack", g_zoneRegion.load());
+                if (moved)
+                {
+                    g_noPutOn.erase(out);
+                    return true;
+                }
+            }
+            size_t inStore = 0;
+            if (store)
+            {
+                eachItem(store, [&](uint32_t, int, int, int) { ++inStore; });
+            }
+            LOG("Gear: storage: nothing more to put in or take out ({} pieces kept for zones, {} in the storage)",
+                g_storageKeep.size(), inStore);
+            g_storageDone = true;
+            g_storageAt = now;
+            g_storageCloseTries = 0;
+            (void)objects;
+            return true;
+        }
+        // Closing, as the player: the inventory closed (its onShow(0) tells the chest window to hide, BH 3).
+        if (now - g_storageAt.load() < 700)
+        {
+            return false;
+        }
+        g_storageAt = now;
+        cUI_Manager* ui = cUI_Manager::instance();
+        cUI_Window2* inventoryWindow = ui ? ui->window(cUI_Manager::Window::inventory) : nullptr;
+        if (!inventoryWindow || !Act::allowed(Act::Kind::Windows, "close the storage chest after the visit"))
+        {
+            return false;
+        }
+        using OnShow = void(__fastcall*)(void* window, void*, uint32_t show);
+        if (++g_storageCloseTries <= 3)
+        {
+            const auto* vt = *reinterpret_cast<const uintptr_t* const*>(inventoryWindow);
+            reinterpret_cast<OnShow>(vt[9])(inventoryWindow, nullptr, 0);
+            LOG("Gear: storage: the inventory closed to close it (try {})", g_storageCloseTries);
+        }
+        else if (g_storageCloseTries == 4)
+        {
+            LOG("Gear: storage: still open after 3 closes of the inventory: left to the windows' watch");
+        }
+        return false;
+    }
+
     void work(void*)
     {
         // Whatever way work() leaves (a return, an exception from a call into the game), the next one may start.
@@ -3306,7 +3718,10 @@ namespace
             // crashed 1.7 s on, at an address in no module): the master's and the smith's work waits 15 s past the
             // last attack.
             const bool calm = !AutoAttack::foughtWithin(15000);
-            if (buyHorse(hero))
+            if (Act::may(Act::Kind::Storage) && storageStep(hero, pack))
+            {
+            }
+            else if (buyHorse(hero))
             {
             }
             else if (calm && g_wantCombo && makeCombo(hero))
@@ -3865,6 +4280,26 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
     g_switchTo = static_cast<uint32_t>(best);
     Inject::engineCall(&switchSlot, nullptr);
     return true;
+}
+
+bool Gear::wantsStorage()
+{
+    return Act::may(Act::Kind::Storage) && (g_wantStore.load() || g_wantTake.load());
+}
+
+void Gear::storageUsed(uint32_t id)
+{
+    if (g_storageId.load() != id)
+    {
+        g_storageDone = false;
+    }
+    g_storageId = id;
+    g_storageAt = GetTickCount();
+}
+
+bool Gear::storageOpen()
+{
+    return g_storageId.load() != 0;
 }
 
 int Gear::slotWeapons(int slot)

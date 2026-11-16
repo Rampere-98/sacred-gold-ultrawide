@@ -46,6 +46,7 @@ namespace
         {"SaveLoad", "Guardar y cargar partida"},
         {"Windows", "Cerrar ventanas"},
         {"Retreat", "Retirarse y esquivar"},
+        {"Storage", "Almacén (guardar y sacar equipo por zona)"},
     };
 
     std::atomic<unsigned char> g_mode[kCount] = {};

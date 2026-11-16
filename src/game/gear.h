@@ -66,6 +66,14 @@ namespace Gear
     // the enemy's resistances), switched to as the keys 1-5 do when it beats the active one by 15 %. True if switched.
     // Call with the hero at rest (no art under way).
     bool chooseWeaponFor(uint32_t targetId);
+    // The storage chest (the player, 2026-11-16: «el almacén [...] deberá contener equipamiento con resistencia a la
+    // zona donde van [...] no dejes que el agente guarde armas»): pieces worth keeping for other zones to put in, or
+    // one to take out for where the hero is going. The auto attack goes to a storage chest seen near for it.
+    bool wantsStorage();
+    // The agent used storage chest `id` (its window about to open): Gear works in it and closes it.
+    void storageUsed(uint32_t id);
+    // The agent's visit to the storage under way (its window open or about to): the inventory left open meanwhile.
+    bool storageOpen();
     // Weapon slot `slot`'s weapons, for the arts that need a kind of weapon: bit 0 read, bit 1 a ranged weapon in it,
     // bit 2 a two-handed one, bit 3 any weapon. 0: not known yet (the weapon slots not ready).
     int slotWeapons(int slot);
