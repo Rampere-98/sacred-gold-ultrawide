@@ -474,6 +474,9 @@ namespace
     DWORD g_doorHoldUntil = 0;
     DWORD g_entranceHoldUntil = 0;  // on the way to a house's way in: no chest takes the walk over meanwhile
     DWORD g_craftHoldUntil = 0;     // by a craftsman until then: the roam and the stray dialog's Enter wait
+    // Far quest goals (over 300 tiles) the position watch found the hero not getting anywhere towards, in the last 10 min.
+    int g_farFails = 0;
+    DWORD g_farFailAt = 0;
     // The walk to the way out of where the hero is shut in, ordered by the stuck guard: kept by the roam (and the arrow
     // dodge) until the hero is there or the time is up (the stuck solver, 2026-11-16, A5 in the cave 5.2: nine of nine
     // such orders taken over by the roam's own goals within 3-11 s).
@@ -5867,6 +5870,13 @@ namespace
                     CombatState::action(self) == CombatState::Fighting);
                 Findings::note("stuck", self->x, self->y, "no progress for {} s (step {})", (now - s_since) / 1000, s_step);
                 ClickWalk::cancel();
+                if (!g_questBook.empty() &&
+                    std::hypot(static_cast<double>(g_questBook.front().x - self->x),
+                               static_cast<double>(g_questBook.front().y - self->y)) > 300.0 * kTileSize)
+                {
+                    g_farFails = g_farFailAt && now - g_farFailAt < 600000 ? g_farFails + 1 : 1;
+                    g_farFailAt = now;
+                }
                 if (!g_questBook.empty())
                 {
                     const QuestGoal& g = g_questBook.front();
@@ -5911,6 +5921,15 @@ namespace
                     s_shunUntil = tick + 120000;
                 }
                 setIntent(Intent::Farm, "the quest's way is where the hero died lately: farming elsewhere first");
+                return true;
+            }
+            // Two far walks in 10 min that got nowhere (the stuck solver, 2026-11-16: A4 26 min and not one fight, its
+            // goals 566, 649, 652 and 699 tiles out in turn, each left after 25 s on the same spot): the experience
+            // first, near; the far goals are tried again after the 10 min.
+            if (g_farFails >= 2 && g_farFailAt && tick - g_farFailAt < 600000 &&
+                std::hypot(static_cast<double>(x - self->x), static_cast<double>(y - self->y)) > 300.0 * kTileSize)
+            {
+                setIntent(Intent::Farm, "far goals got nowhere twice lately: farming near first");
                 return true;
             }
             if (nearHopelessSpot(static_cast<int>(x / kTileSize), static_cast<int>(y / kTileSize), tick))

@@ -682,7 +682,19 @@ namespace
                     g_grid.layer = layerOf(creature);
                     const Cell from = cellOf(creature->x, creature->y);
                     Cell end{};
-                    if (plan(from, cellOf(order->x, order->y)) && nextLeg(from, end))
+                    const DWORD planStart = GetTickCount();
+                    const bool planned = plan(from, cellOf(order->x, order->y)) && nextLeg(from, end);
+                    // Told for the first 60 far walks whatever the debug switch (the stuck solver, 2026-11-16: A3's main
+                    // quest 1000-1330 tiles out launched 14 times and A4's goals 566-699 tiles out for 26 min, with not
+                    // one line to say whether the plan was found; the walk then goes on as the crude 30-tile order).
+                    static int s_farTold = 0;
+                    if (Config::debug.uiTrace || s_farTold++ < 60)
+                    {
+                        LOG("Click walk: far target {},{} ({:.0f} tiles, layer {}): {} in {} ms{}", cellOf(order->x, order->y).x,
+                            cellOf(order->x, order->y).y, tiles, g_grid.layer, planned ? "plan found" : "NO plan",
+                            GetTickCount() - planStart, planned ? "" : ", the order goes out straight (30 tiles)");
+                    }
+                    if (planned)
                     {
                         g_routed = true;
                         g_route.replans = 0;
