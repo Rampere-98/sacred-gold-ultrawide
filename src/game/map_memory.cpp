@@ -15,6 +15,8 @@
 #include <ddraw.h>
 #include <imgui.h>
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -207,6 +209,66 @@ namespace
         return p.substr(0, p.find_last_of(L"\\/") + 1) + L"SacredBild-map2.txt";  // map2, 2026-11-13: begun again (the player: "borra el registro actual")
     }
 
+    // steamapps\common, the copies' folder: the files the eight share (written by tools/red_rutas.py, read only here).
+    std::wstring sharedPath(const wchar_t* name)
+    {
+        wchar_t exe[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring p = exe;
+        p = p.substr(0, p.find_last_of(L"\\/"));             // the copy's folder
+        return p.substr(0, p.find_last_of(L"\\/") + 1) + name;
+    }
+
+    // The shared map (the coordinator, 2026-11-16: «ningún agente sabe lo que han visto los otros»): what all eight
+    // copies saw, merged away from the game (tools/red_rutas.py comun), a byte per tile of what routes need. Read
+    // once with the copy's own map, never written here: each copy keeps writing its own SacredBild-map2.txt, the
+    // merge reads them all, so none overwrites another's. Its tiles count only where the copy's own map knows nothing.
+    enum : uint8_t { kSharedUnknown = 0, kSharedWalk = 1, kSharedWall = 2, kSharedGate = 3, kSharedScanShut = 4 };
+    using SharedChunk = std::array<uint8_t, kChunkSide * kChunkSide>;
+    std::unordered_map<uint64_t, std::unique_ptr<SharedChunk>> g_shared;   // by chunkKey; under g_lock
+
+    // Under g_lock.
+    void loadShared()
+    {
+        const DWORD t0 = GetTickCount();
+        const std::wstring p = sharedPath(L"SacredBild-mapa-comun.bin");
+        FILE* f = _wfopen(p.c_str(), L"rb");
+        if (!f)
+        {
+            LOG("MapMemory: no shared map beside the copies (SacredBild-mapa-comun.bin): routes over this copy's map alone");
+            return;
+        }
+        char magic[4] = {};
+        uint32_t head[3] = {};  // version, chunks, copies merged
+        if (std::fread(magic, 1, 4, f) != 4 || std::memcmp(magic, "SBMC", 4) != 0 || std::fread(head, 4, 3, f) != 3 ||
+            head[0] != 1 || head[1] > 200000)
+        {
+            LOG("MapMemory: the shared map is not one this build reads (version {}): left out", head[0]);
+            std::fclose(f);
+            return;
+        }
+        size_t squares = 0;
+        for (uint32_t i = 0; i < head[1]; ++i)
+        {
+            uint8_t layer = 0, pad = 0;
+            int16_t cx = 0, cy = 0;
+            uint16_t pad2 = 0;
+            auto chunk = std::make_unique<SharedChunk>();
+            if (std::fread(&layer, 1, 1, f) != 1 || std::fread(&pad, 1, 1, f) != 1 || std::fread(&cx, 2, 1, f) != 1 ||
+                std::fread(&cy, 2, 1, f) != 1 || std::fread(&pad2, 2, 1, f) != 1 ||
+                std::fread(chunk->data(), 1, chunk->size(), f) != chunk->size())
+            {
+                LOG("MapMemory: the shared map ends early, at chunk {} of {}", i, head[1]);
+                break;
+            }
+            squares += static_cast<size_t>(std::count_if(chunk->begin(), chunk->end(), [](uint8_t v) { return v != 0; }));
+            g_shared[key(layer, cx, cy)] = std::move(chunk);
+        }
+        std::fclose(f);
+        LOG("MapMemory: shared map of {} copies: {} squares in {} chunks ({} KB), read in {} ms", head[2], squares,
+            g_shared.size(), g_shared.size() * sizeof(SharedChunk) / 1024, GetTickCount() - t0);
+    }
+
     // Up to `max` whitespace separated integers (decimal, or hex for the one at `hexAt`); how many were read.
     int numbers(const char* p, long* out, int max, int hexAt = -1)
     {
@@ -233,6 +295,7 @@ namespace
     void load()
     {
         g_loaded = true;
+        loadShared();
         FILE* f = _wfopen(path().c_str(), L"r");
         if (!f)
         {
@@ -2044,6 +2107,35 @@ bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, i
             }
         }
     }
+    // Where this copy knows nothing, what the others saw (the shared map), before the world files judge the rest.
+    size_t fromShared = 0;
+    for (int cy = (y0 >> kChunkShift); cy <= ((y0 + h - 1) >> kChunkShift) && !g_shared.empty(); ++cy)
+    {
+        for (int cx = (x0 >> kChunkShift); cx <= ((x0 + w - 1) >> kChunkShift); ++cx)
+        {
+            const auto it = g_shared.find(chunkKey(layer, cx << kChunkShift, cy << kChunkShift));
+            if (it == g_shared.end())
+            {
+                continue;
+            }
+            for (int i = 0; i < kChunkSide * kChunkSide; ++i)
+            {
+                const uint8_t s = (*it->second)[i];
+                const int tx = (cx << kChunkShift) + (i & (kChunkSide - 1)), ty = (cy << kChunkShift) + (i >> kChunkShift);
+                if (!s || tx < x0 || ty < y0 || tx >= x0 + w || ty >= y0 + h)
+                {
+                    continue;
+                }
+                uint8_t& v = step[static_cast<size_t>(ty - y0) * w + (tx - x0)];
+                if (v != 22)
+                {
+                    continue;
+                }
+                v = s == kSharedWalk ? 10 : s == kSharedGate ? 40 : s == kSharedScanShut ? 1 : 0;
+                ++fromShared;
+            }
+        }
+    }
     // The doors seen in the box: a way through (cost 12) or a wall (0), applied after the world files below.
     std::vector<std::tuple<int, int, bool>> doors;
     for (const auto& [k, opens] : g_doorTiles)
@@ -2068,6 +2160,12 @@ bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, i
     if (const DWORD held = GetTickCount() - lockedAt; held > 300)
     {
         LOG("MapMemory: the route box {}x{} held the map {} ms", w, h, held);
+    }
+    // A wide box (the far walks): how much of it this copy knew only from the others.
+    if (fromShared && std::max(w, h) >= 300)
+    {
+        LOG("MapMemory: route {},{} to {},{} (box {}x{}): {} squares known only from the shared map", fromX, fromY, toX,
+            toY, w, h, fromShared);
     }
     // Barred by the tile test alone within 12 tiles of a door that opens: a house's floor, tested with its door shut,
     // dear (40) but a way, so a route into it exists; a real wall there gets blocked on walking and closes then.
