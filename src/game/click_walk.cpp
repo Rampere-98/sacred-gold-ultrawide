@@ -260,18 +260,32 @@ namespace
             // near each end, on a low thread): the narrow route box (48 tiles) misses ways round rivers and mountains,
             // and over 150 tiles it held the window's thread 28-123 s (A2-A8, 2026-11-16). While the trip is worked out,
             // no plan this time (the short straight order); with no net, or no node near, the old ways.
-            const RouteNet::Trip byNet = chebyshev(goal, start.x, start.y) > 150
-                                             ? RouteNet::trip(g_grid.layer, start.x, start.y, goal.x, goal.y, wide)
-                                             : RouteNet::Trip::None;
+            const bool farGoal = chebyshev(goal, start.x, start.y) > 150;
+            const RouteNet::Trip byNet = farGoal ? RouteNet::trip(g_grid.layer, start.x, start.y, goal.x, goal.y, wide)
+                                                 : RouteNet::Trip::None;
             if (byNet == RouteNet::Trip::Working)
             {
                 g_netWorking = true;
                 return false;
             }
             // Then the narrow box; with no way in it, the wide one (margins 120 and 240) on its own low thread (the
-            // stuck solver, 2026-11-16: A6 by a river at 3018,2675, «NO plan» for an hour into the water).
-            if (byNet == RouteNet::Trip::Ready || MapMemory::route(g_grid.layer, start.x, start.y, goal.x, goal.y, wide) ||
-                MapMemory::routeWideAsync(g_grid.layer, start.x, start.y, goal.x, goal.y, wide))
+            // stuck solver, 2026-11-16: A6 by a river at 3018,2675, «NO plan» for an hour into the water). A far goal
+            // the net gave up on or has no node for skips the narrow box: on the window's thread it took 28-123 s for
+            // such goals (the coordinator, 2026-11-16): the wide one on its thread, else the straight order.
+            const bool narrow = !farGoal && byNet != RouteNet::Trip::Ready &&
+                                MapMemory::route(g_grid.layer, start.x, start.y, goal.x, goal.y, wide);
+            const bool byWide = byNet != RouteNet::Trip::Ready && !narrow &&
+                                MapMemory::routeWideAsync(g_grid.layer, start.x, start.y, goal.x, goal.y, wide);
+            if (farGoal && byNet == RouteNet::Trip::None)
+            {
+                static int s_farTold = 0;
+                if (Config::debug.uiTrace || s_farTold++ < 100)
+                {
+                    LOG("Click walk: far goal {},{} not by the net: {}", goal.x, goal.y,
+                        byWide ? "the wide route" : "no wide route (yet): the straight order");
+                }
+            }
+            if (byNet == RouteNet::Trip::Ready || narrow || byWide)
             {
                 for (const auto& [x, y] : wide)
                 {
