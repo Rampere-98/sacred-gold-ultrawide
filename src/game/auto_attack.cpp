@@ -3519,7 +3519,12 @@ namespace
         // the Lentil Liqueur.
         static constexpr int32_t kFirst[] = {15005, 15009, 15015, 15036, rq(1, 2), rq(2, 4), rq(3, 1), rq(4, 3),
                                              rq(5, 1), rq(5, 2), rq(7, 3), rq(9, 1), rq(12, 2), rq(13, 2), rq(13, 3),
-                                             rq(14, 1), rq(17, 3), rq(18, 3), rq(22, 1), rq(24, 11), rq(25, 3)};
+                                             rq(14, 1), rq(17, 3), rq(18, 3), rq(22, 1), rq(24, 11), rq(25, 3),
+                                             // Whispers in the Wind (302): fails on its own a few minutes after it is
+                                             // taken with no deadline the agent can read (the quests' session,
+                                             // 2026-11-16: A5 19:35:17 and again 5 min after the load, the hero far
+                                             // off on the main quest; done only where the witch was seen at once).
+                                             302};
         static constexpr int32_t kLast[] = {10259, 10260, rq(6, 2), rq(13, 1), rq(22, 3)};
         if (std::find(std::begin(kFirst), std::end(kFirst), number) != std::end(kFirst))
         {
@@ -3783,12 +3788,13 @@ namespace
                               sectorLevels(world, static_cast<int>(heroX / kTileSize), static_cast<int>(heroY / kTileSize),
                                            hereLo, hereHi) &&
                               hereHi + 3 <= heroLevel;
+        // Quests whose ground is far above a low hero, held until he has the level (a player comes back later): the
+        // Dreamer of Winters (1002, zone 40, docs/QUESTS.md): Valoria goes to the stone circle and dies there, the
+        // quest failed 35-55 s after it was taken, heroes of level 16-24 (the quests' session, 2026-11-16: A2 16:03,
+        // A3 21:02 and 21:38, A4 18:22).
+        static constexpr std::pair<int32_t, int> kMinLevel[] = {{1002, 35}};
         for (QuestGoal& g : g_questBook)
         {
-            if (g.main && outgrown && g.tier == 0)
-            {
-                g.tier = 1;
-            }
             g.distance = wayLength(heroX, heroY, g.x, g.y);
             g.blocked = goalBlocked(g.x, g.y, now) ||
                         (g.number > 0 &&
@@ -3834,6 +3840,38 @@ namespace
                 hi + 5 <= heroLevel)
             {
                 g.distance *= 2.5;
+            }
+            for (const auto& [quest, level] : kMinLevel)
+            {
+                if (g.number == quest && heroLevel > 0 && heroLevel < level)
+                {
+                    g.blocked = true;
+                }
+            }
+        }
+        // A hero who has outgrown the region he stands in follows the main quest first, but not while a side quest in
+        // a fitting region (its top level 2 or more over his less) is open within 600 tiles and the main quest is
+        // farther than twice it (the quests' session, 2026-11-16: A2 and A6 in Braverock, 1601-1702, 15058 and 15059
+        // open and picked 0-3 times, the main quest 44 at weight 1 1300-1800 tiles off picked 23-28 times).
+        if (outgrown)
+        {
+            double fitting = 1e18;
+            for (const QuestGoal& o : g_questBook)
+            {
+                int lo = 0, hi = 0;
+                if (o.kind == GoalKind::Journal && !o.main && !o.blocked && o.distance < 600.0 * kTileSize && world &&
+                    sectorLevels(world, static_cast<int>(o.x / kTileSize), static_cast<int>(o.y / kTileSize), lo, hi) &&
+                    hi >= heroLevel - 2)
+                {
+                    fitting = std::min(fitting, o.distance);
+                }
+            }
+            for (QuestGoal& g : g_questBook)
+            {
+                if (g.main && g.tier == 0 && !(fitting < 1e17 && g.distance > 2.0 * fitting))
+                {
+                    g.tier = 1;
+                }
             }
         }
         static DWORD s_followedSince = 0;
