@@ -474,6 +474,11 @@ namespace
     DWORD g_doorHoldUntil = 0;
     DWORD g_entranceHoldUntil = 0;  // on the way to a house's way in: no chest takes the walk over meanwhile
     DWORD g_craftHoldUntil = 0;     // by a craftsman until then: the roam and the stray dialog's Enter wait
+    // The walk to the way out of where the hero is shut in, ordered by the stuck guard: kept by the roam (and the arrow
+    // dodge) until the hero is there or the time is up (the stuck solver, 2026-11-16, A5 in the cave 5.2: nine of nine
+    // such orders taken over by the roam's own goals within 3-11 s).
+    int32_t g_wayOutX = 0, g_wayOutY = 0;
+    DWORD g_wayOutUntil = 0;
     float g_doorRange = 12.0f * 53.66563f;
 
     bool acceptDoor(uint32_t id, void*)
@@ -4992,8 +4997,10 @@ namespace
         static uint64_t s_told = 0;
         const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
         const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
-        for (const auto& [ex, ey] : waysOutAround(layer, htx, hty))
+        size_t gameWays = 0, wi = 0;
+        for (const auto& [ex, ey] : waysOutAround(layer, htx, hty, &gameWays))
         {
+            const bool gameWay = wi++ < gameWays;
             const uint64_t wk = (static_cast<uint64_t>(static_cast<uint32_t>(ex)) << 32) | static_cast<uint32_t>(ey);
             if (const auto t = s_tried.find(wk); t != s_tried.end() && now - t->second < 120000)
             {
@@ -5006,7 +5013,8 @@ namespace
             }
             const int32_t wx = static_cast<int32_t>((ex + 0.5) * kTileSize);
             const int32_t wy = static_cast<int32_t>((ey + 0.5) * kTileSize);
-            if (approachStalled(wx, wy, std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y)), now))
+            if (!gameWay &&
+                approachStalled(wx, wy, std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y)), now))
             {
                 s_tried[wk] = now;
                 continue;
@@ -5304,6 +5312,9 @@ namespace
                 Findings::note("stuck", self->x, self->y, "shut in: to the way out at {},{}", bx, by);
                 ClickWalk::walkTo(static_cast<int32_t>((bx + 0.5) * kTileSize), static_cast<int32_t>((by + 0.5) * kTileSize),
                                   false);
+                g_wayOutX = static_cast<int32_t>((bx + 0.5) * kTileSize);
+                g_wayOutY = static_cast<int32_t>((by + 0.5) * kTileSize);
+                g_wayOutUntil = now + static_cast<DWORD>(std::min(45.0, 10.0 + best * 0.7) * 1000.0);
                 return true;
             }
         }
@@ -5400,6 +5411,24 @@ namespace
         if (self && hero && stuckGuard(now, self))
         {
             return;
+        }
+        // On the way to the way out the stuck guard ordered (see g_wayOutUntil): no farm zone, quest, companion wait or
+        // loot takes the walk over; the order is given again if something cut it short. Ends there, at the time limit
+        // or once the area is no longer shut in.
+        if (self && hero && g_wayOutUntil)
+        {
+            if (Whereabouts::area().shutIn && static_cast<int>(now - g_wayOutUntil) < 0 &&
+                std::hypot(static_cast<double>(g_wayOutX - self->x), static_cast<double>(g_wayOutY - self->y)) > 1.2 * kTileSize)
+            {
+                static DWORD s_wayOutAskAt = 0;
+                if (!ClickWalk::routing() && now - s_wayOutAskAt > 3000)
+                {
+                    s_wayOutAskAt = now;
+                    ClickWalk::walkTo(g_wayOutX, g_wayOutY, false);
+                }
+                return;
+            }
+            g_wayOutUntil = 0;
         }
         if (static_cast<int>(now - g_doorHoldUntil) < 0 || static_cast<int>(now - g_craftHoldUntil) < 0)
         {
@@ -6220,7 +6249,11 @@ namespace
                             }
                             const int32_t ewx = static_cast<int32_t>((ex + 0.5) * kTileSize);
                             const int32_t ewy = static_cast<int32_t>((ey + 0.5) * kTileSize);
-                            if (approachStalled(ewx, ewy,
+                            // The game's own ways out are not parked (the stuck solver, 2026-11-16: the cave 5.2's
+                            // pad cell 5370,336 parked 60 min on A5 and shared with the other seven copies, so the roam
+                            // skipped it silently and only the stuck guard, every 3 min, tried it).
+                            if (wi >= gameWays &&
+                                approachStalled(ewx, ewy,
                                                 std::hypot(static_cast<double>(ewx - self->x), static_cast<double>(ewy - self->y)),
                                                 now))
                             {
