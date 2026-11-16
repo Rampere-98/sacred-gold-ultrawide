@@ -44,11 +44,15 @@ namespace
     bool g_ok = false;
     HANDLE g_wld = INVALID_HANDLE_VALUE;
     std::vector<Block> g_blocks;                // by sy*100 + sx
-    std::vector<int16_t> g_slotOf;              // by sy*100 + sx: its cache slot, -1 none
+    std::vector<int16_t> g_slotOf;              // by sy*100 + sx: its cache slot, -1 none, kUnreadable
+    // A sector that could not be read or inflated, remembered (the coordinator, 2026-11-16 21:10: boxes of 104x132 to
+    // 219x162 inflated 13728-21691 sectors in 11-19 s, under this lock: one unreadable sector per copy, 50,37 on A2,
+    // read and inflated again for every tile of it asked, its warning told once).
+    constexpr int16_t kUnreadable = -2;
+    uint32_t g_unreadable = 0;
     std::vector<Slot> g_slots;
     uint32_t g_clock = 0;
     uint32_t g_inflated = 0;                    // sectors read and inflated (cache misses), under g_lock
-    bool g_warned = false;
 
     std::wstring worldDir()
     {
@@ -150,19 +154,27 @@ namespace
             g_slots[cached].lastUse = ++g_clock;
             return &g_slots[cached];
         }
+        if (cached == kUnreadable)
+        {
+            return nullptr;
+        }
         const Block& b = g_blocks[code];
         ++g_inflated;
         std::vector<uint8_t> packed(b.size);
         std::vector<uint8_t> raw(kBlockSize);
         uLongf rawLen = static_cast<uLongf>(raw.size());
-        if (!readAt(g_wld, b.offset, packed.data(), b.size) ||
-            uncompress(raw.data(), &rawLen, packed.data(), static_cast<uLong>(packed.size())) != Z_OK ||
-            rawLen < kTilesAt + kSectorTiles * kSectorTiles * kTileSize)
+        const bool read = readAt(g_wld, b.offset, packed.data(), b.size);
+        const int z = read ? uncompress(raw.data(), &rawLen, packed.data(), static_cast<uLong>(packed.size())) : Z_OK;
+        if (!read || z != Z_OK || rawLen < kTilesAt + kSectorTiles * kSectorTiles * kTileSize)
         {
-            if (!g_warned)
+            g_slotOf[code] = kUnreadable;
+            if (++g_unreadable <= 40)
             {
-                g_warned = true;
-                LOG("World tiles: sector {},{} unreadable in WORLD\\sectors.wldx", code % kGrid, code / kGrid);
+                LOG("World tiles: sector {},{} unreadable in WORLD\\sectors.wldx ({}; block at {} of {} bytes): its tiles "
+                    "not known from the files, not read again", code % kGrid, code / kGrid,
+                    !read ? std::string("not read") : z != Z_OK ? "zlib " + std::to_string(z)
+                                                              : "inflated to " + std::to_string(rawLen) + " bytes",
+                    b.offset, b.size);
             }
             return nullptr;
         }
@@ -269,7 +281,8 @@ void WorldTiles::fill(int tileX, int tileY, int w, int h, int8_t* out)
     if (const DWORD took = GetTickCount() - t0; took > 300 && s_told++ < 200)
     {
         LOG("World tiles: box {}x{} filled in {} ms: {} waiting for the files' lock, {} in turns given, {} sectors "
-            "inflated (thread priority {})", w, h, took, waited, yielded, inflated, priorityWas);
+            "inflated, {} known unreadable (thread priority {})", w, h, took, waited, yielded, inflated, g_unreadable,
+            priorityWas);
     }
 }
 
