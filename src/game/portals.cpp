@@ -73,24 +73,26 @@ bool Portals::plan(int hx, int hy, int gx, int gy, uint32_t skip, double walk, P
     return out.from >= 0 && best <= out.walk * kShare && out.walk - best >= kMinSavedTiles;
 }
 
-int Portals::unjoinedNear(int hx, int hy, double radius, uint32_t skip)
+int Portals::unjoinedOnTheWay(int hx, int hy, int gx, int gy, double maxExtra, uint32_t skip, double& extra)
 {
     const uint32_t mask = joined() | skip;
-    int nearest = -1;
-    double best = radius;
+    const double direct = tiles(hx, hy, gx, gy);
+    int best = -1;
+    extra = maxExtra;
     for (int id = 0; id < kCount; ++id)
     {
         if (mask & (1u << id))
         {
             continue;
         }
-        if (const double d = tiles(hx, hy, kTiles[id][0], kTiles[id][1]); d <= best)
+        const double more = tiles(hx, hy, kTiles[id][0], kTiles[id][1]) + tiles(kTiles[id][0], kTiles[id][1], gx, gy) - direct;
+        if (more <= extra)
         {
-            best = d;
-            nearest = id;
+            extra = more;
+            best = id;
         }
     }
-    return nearest;
+    return best;
 }
 
 void Portals::arm(int from, int to)

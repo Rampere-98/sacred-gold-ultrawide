@@ -31,8 +31,9 @@ namespace Portals
     // `walk`: the walk's length when known better than the straight line (the route net), else 0.
     bool plan(int hx, int hy, int gx, int gy, uint32_t skip, double walk, Plan& out);
 
-    // The nearest portal not joined yet within `radius` tiles of (hx, hy), -1 if none.
-    int unjoinedNear(int hx, int hy, double radius, uint32_t skip);
+    // The portal not joined yet (and not in `skip`) that lengthens the way from (hx, hy) to (gx, gy) least, by at most
+    // `maxExtra` tiles (as the crow flies: hero -> portal -> goal against hero -> goal); -1 if none. `extra` the tiles.
+    int unjoinedOnTheWay(int hx, int hy, int gx, int gy, double maxExtra, uint32_t skip, double& extra);
 
     // The trip under way, shared with the portal box's watcher (another thread: the box holds the game in its modal
     // loop, no frames meanwhile). `to` -1: only going to join `from`.

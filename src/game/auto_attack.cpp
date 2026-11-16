@@ -5359,7 +5359,8 @@ namespace
     };
     PortalTrip g_portalTrip;
     std::unordered_map<int, DWORD> g_portalLeftUntil;   // portal id -> not used again before this tick
-    std::unordered_map<int, DWORD> g_portalJoinTried;   // portal id -> stepped onto to join it at
+    uint32_t g_portalJoinTried = 0;     // portals gone out of the way for to join them, once each a game (bit = id)
+    uintptr_t g_portalJoinHero = 0;     // ... for this hero object (another: a game loaded, all may be tried again)
 
     uint32_t portalsLeft(DWORD now)
     {
@@ -5478,26 +5479,33 @@ namespace
             return false;
         }
         const uint32_t skip = portalsLeft(now);
-        // A portal not joined yet near the way: stepped onto (once in 20 min each).
-        uint32_t tried = skip;
-        for (const auto& [id, at] : g_portalJoinTried)
+        // A portal not joined yet on the way, gone out of the way for as a player does (the coordinator, 2026-11-16):
+        // once per portal and game, at most 60 tiles more than the way to the goal, never with a quest's time running
+        // nor in a fight (an enemy taken or a blow in the last 10 s).
+        if (const uintptr_t hero = Teleports::hero(); hero != g_portalJoinHero)
         {
-            if (now - at < 1200000)
-            {
-                tried |= 1u << id;
-            }
+            g_portalJoinHero = hero;
+            g_portalJoinTried = 0;
         }
-        if (const int nearId = Portals::unjoinedNear(htx, hty, 30.0, tried); nearId >= 0)
+        const bool timed = std::any_of(g_questBook.begin(), g_questBook.end(),
+                                       [](const QuestGoal& g) { return g.minutesLeft > 0; });
+        const bool fighting = (g_lastTargetAt && now - g_lastTargetAt < 10000) || (g_lastHurtAt && now - g_lastHurtAt < 10000);
+        double extra = 0.0;
+        if (const int joinId = timed || fighting ? -1
+                                                 : Portals::unjoinedOnTheWay(htx, hty, gtx, gty, 60.0,
+                                                                             skip | g_portalJoinTried, extra);
+            joinId >= 0)
         {
-            Portals::tile(nearId, ftx, fty);
-            g_portalJoinTried[nearId] = now;
-            if (Act::allowed(Act::Kind::Portals, "step onto a portal nearby to join it"))
+            Portals::tile(joinId, ftx, fty);
+            g_portalJoinTried |= 1u << joinId;
+            if (Act::allowed(Act::Kind::Portals, "go out of the way to a portal to join it"))
             {
-                LOG("AutoAttack: portal {} at {},{} ({:.0f} tiles) not joined yet (the hero's portals {:x}): stepping onto it",
-                    nearId, ftx, fty, std::hypot(htx - ftx, hty - fty), Portals::joined());
+                LOG("AutoAttack: portal {} at {},{} ({:.0f} tiles, {:.0f} more on the way to {},{}) not joined yet (the "
+                    "hero's portals {:x}): stepping onto it",
+                    joinId, ftx, fty, std::hypot(htx - ftx, hty - fty), extra, gtx, gty, Portals::joined());
                 g_portalTrip.since = now;
                 g_portalTrip.onTileSince = 0;
-                Portals::arm(nearId, -1);
+                Portals::arm(joinId, -1);
                 px = tileMiddle(ftx);
                 py = tileMiddle(fty);
                 return true;
