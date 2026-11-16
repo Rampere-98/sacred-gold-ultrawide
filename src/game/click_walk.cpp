@@ -248,7 +248,11 @@ namespace
             partial = true;
             std::vector<std::pair<int, int>> wide;
             Cell stop = start;
-            if (MapMemory::route(g_grid.layer, start.x, start.y, goal.x, goal.y, wide))
+            // The narrow box first; with no way in it, the wide one (margins 120 and 240) on its own low thread, its
+            // route taken once ready (the stuck solver, 2026-11-16: A6 by a river at 3018,2675, 328 known tiles from
+            // the far side by a bend out of the 48-tile box: «NO plan» for an hour, the order straight into the water).
+            if (MapMemory::route(g_grid.layer, start.x, start.y, goal.x, goal.y, wide) ||
+                MapMemory::routeWideAsync(g_grid.layer, start.x, start.y, goal.x, goal.y, wide))
             {
                 for (const auto& [x, y] : wide)
                 {

@@ -2897,6 +2897,18 @@ namespace
                 g_lastHurtAt = now;
             }
             const bool striking = CombatState::action(self) == CombatState::Fighting || CombatState::casting(self);
+            // A target never hurt in 12 s of being the target, beyond the melee (the stuck solver, 2026-11-16, A6 on the
+            // river's bank: a goblin warrior of level 9 across the water, fights of 4-30 s every 20 s for 20 min,
+            // «0 killed, 0 experience», its health 338 of 338 each time; the distance went up and down by more than a
+            // tenth along the bank, and each time that started the «no nearer» clock again).
+            static uint32_t s_untouchedOf = 0;
+            static DWORD s_untouchedSince = 0;
+            if (s_untouchedOf != g_target || hurtIt)
+            {
+                s_untouchedOf = g_target;
+                s_untouchedSince = now;
+            }
+            const bool untouched12 = now - s_untouchedSince > 12000 && currentDistance > melee;
             // Striking over a fence (a spear's reach) is no progress: only its health going down is.
             const cObject* targetObject = objects && self ? objects->object(g_target) : nullptr;
             const bool fencedOff = targetObject && currentDistance >= 1.5f * static_cast<float>(kTileSize) &&
@@ -2910,7 +2922,7 @@ namespace
                 g_targetBest = g_targetBest > 0.0f ? std::min(g_targetBest, currentDistance) : currentDistance;
                 g_targetBestAt = now;
             }
-            else if (now - g_targetBestAt > kStuckMs)
+            else if (now - g_targetBestAt > kStuckMs || untouched12)
             {
                 // Each time again the same one, three times as long (20 s, 1 min, 3 min, then 10 min). Seen live
                 // (2026-11-10): an enemy across the water taken again every 20 s for three hours, the 4 s chase
