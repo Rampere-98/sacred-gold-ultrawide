@@ -223,6 +223,9 @@ namespace
     bool g_native = false;
     // The last plan came to nothing because the route net was still working its trip out (on a low thread).
     bool g_netWorking = false;
+    // A far walk going straight while its trip is worked out: asked again every half second, taken once ready.
+    bool g_netPending = false;
+    DWORD g_netAskedAt = 0;
 
     bool agentOrder();
 
@@ -602,6 +605,7 @@ namespace
         g_fromMap = false;
         g_routed = false;
         g_native = false;
+        g_netPending = false;
         if (g_active.exchange(false) && Config::debug.uiTrace)
         {
             LOG("Click walk: {} ({},{})", why, g_goalX, g_goalY);
@@ -722,8 +726,11 @@ namespace
                     Cell end{};
                     g_planning = true;
                     const DWORD planStart = GetTickCount();
+                    g_netWorking = false;
                     const bool planned = plan(from, cellOf(order->x, order->y)) && nextLeg(from, end);
                     g_planning = false;
+                    g_netPending = !planned && g_netWorking;
+                    g_netAskedAt = GetTickCount();
                     // Told for the first 60 far walks whatever the debug switch (the stuck solver, 2026-11-16: A3's main
                     // quest 1000-1330 tiles out launched 14 times and A4's goals 566-699 tiles out for 26 min, with not
                     // one line to say whether the plan was found; the walk then goes on as the crude 30-tile order).
@@ -732,7 +739,9 @@ namespace
                     {
                         LOG("Click walk: far target {},{} ({:.0f} tiles, layer {}): {} in {} ms{}", cellOf(order->x, order->y).x,
                             cellOf(order->x, order->y).y, tiles, g_grid.layer, planned ? "plan found" : "NO plan",
-                            GetTickCount() - planStart, planned ? "" : ", the order goes out straight (30 tiles)");
+                            GetTickCount() - planStart,
+                            planned ? "" : g_netPending ? ", the route net works its trip out: straight (30 tiles) meanwhile"
+                                                        : ", the order goes out straight (30 tiles)");
                     }
                     if (planned)
                     {
@@ -934,8 +943,14 @@ namespace
                     g_grid.avoid.push_back(g_route.cells[i]);
                 }
             }
+            g_netWorking = false;
             if (++g_route.replans > kMaxReplans || !plan(at, cellOf(g_goalX, g_goalY)) || !nextLeg(at, next))
             {
+                if (g_netWorking && g_route.replans <= kMaxReplans)
+                {
+                    --g_route.replans;   // the route net works the trip out again: planned on a later tick
+                    return;
+                }
                 finish("blocked");
                 return;
             }
@@ -1055,6 +1070,29 @@ namespace
         {
             continueRoute(engine, hero, stopped);
             return;
+        }
+        if (g_netPending && now - g_netAskedAt >= 500)
+        {
+            g_netAskedAt = now;
+            g_netWorking = false;
+            g_grid.avoid.clear();
+            g_grid.layer = layerOf(hero);
+            const Cell from = cellOf(hero->x, hero->y);
+            Cell end{};
+            if (plan(from, cellOf(g_goalX, g_goalY)) && nextLeg(from, end))
+            {
+                g_netPending = false;
+                g_routed = true;
+                g_route.replans = 0;
+                g_route.hops = 0;
+                int32_t x, y;
+                target(end, x, y);
+                LOG("Click walk: the route net's trip to {},{} is ready: on it from {},{} ({} route tiles)",
+                    cellOf(g_goalX, g_goalY).x, cellOf(g_goalX, g_goalY).y, from.x, from.y, g_route.cells.size());
+                sendLeg(engine, hero, x, y);
+                return;
+            }
+            g_netPending = g_netWorking;
         }
         if (!stopped)
         {

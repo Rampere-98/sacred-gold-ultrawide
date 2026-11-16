@@ -226,6 +226,13 @@ namespace
         k.fromY = fromY;
         k.toX = toX;
         k.toY = toY;
+        // A goal one cannot stand on (a quest giver against a house's wall, the baron at 1676,2352 in a block no route
+        // enters): the stretches end on the known walkable tile nearest it, the walk's last steps left to the grid.
+        int goalX = toX, goalY = toY;
+        if (MapMemory::nearestWalkable(layer, toX, toY, 16, goalX, goalY) && (goalX != toX || goalY != toY))
+        {
+            LOG("RouteNet: goal {},{} not walkable: the net's trip ends at {},{}", toX, toY, goalX, goalY);
+        }
         std::vector<std::pair<int, int>> nearStart, nearGoal;
         {
             const std::lock_guard lock(g_lock);
@@ -234,12 +241,12 @@ namespace
                 load();
             }
             nearStart = nearNodes(layer, fromX, fromY);
-            nearGoal = nearNodes(layer, toX, toY);
+            nearGoal = nearNodes(layer, goalX, goalY);
         }
         // g_nodes and g_ways are only written by load(), done above: read without the lock from here.
         int triedA = 0, triedB = 0;
         std::vector<End> a = ends(nearStart, layer, fromX, fromY, true, triedA);
-        std::vector<End> b = a.empty() ? std::vector<End>{} : ends(nearGoal, layer, toX, toY, false, triedB);
+        std::vector<End> b = a.empty() ? std::vector<End>{} : ends(nearGoal, layer, goalX, goalY, false, triedB);
         if (a.empty() || b.empty())
         {
             LOG("RouteNet: trip {},{} to {},{} on layer {}: no node reached near the {} ({} within {} tiles, {} tried), {} ms",
@@ -336,6 +343,10 @@ namespace
             }
         }
         addThinned(k.points, b[goalEnd[chain.back()]].cells, 6);
+        if (goalX != toX || goalY != toY)
+        {
+            k.points.push_back({toX, toY});
+        }
         k.ok = true;
         k.at = GetTickCount();
         LOG("RouteNet: trip {},{} to {},{} on layer {}: {} tiles by the net ({} as the crow flies), {} nodes{}{}, {} points, "
@@ -369,7 +380,10 @@ RouteNet::Trip RouteNet::trip(int layer, int fromX, int fromY, int toX, int toY,
             // On the trip still: the point ahead nearest the hero, and the trip from there.
             size_t nearest = k.progress;
             int nearestD = INT32_MAX;
-            for (size_t i = k.progress; i < k.points.size(); ++i)
+            // Only a window ahead (about 150 tiles): round a mountain the trip comes back near where it was, beyond
+            // the rock, and the nearest point of all of it would skip the way round.
+            const size_t windowEnd = std::min(k.points.size(), k.progress + 24);
+            for (size_t i = k.progress; i < windowEnd; ++i)
             {
                 const int d = cheb(k.points[i].first, k.points[i].second, fromX, fromY);
                 if (d < nearestD)

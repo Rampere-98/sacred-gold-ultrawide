@@ -27,6 +27,9 @@ namespace MapMemory
     // once one worked out for this goal (within 4 tiles) from near this start (12 tiles) is under a minute old; false
     // meanwhile, a search started if none runs.
     bool routeWideAsync(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out);
+    // The tile nearest (x, y) on `layer`, within `radius`, known to be walkable (walked or by the tile test, by this copy
+    // or in the shared map): the end of a route to a goal one cannot stand on (a quest giver in a house's wall).
+    bool nearestWalkable(int layer, int x, int y, int radius, int& outX, int& outY);
     // A door seen (the player, 2026-11-11: «ten cuidado con las puertas, es importante que existan»; a script-held
     // door clicked again and again once kept the Daemon shut in 18 min): one that opens (or is open) is a way through
     // for routes, its tile and those around it; one held shut by a script or a key is a wall there, whatever the world

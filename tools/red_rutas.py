@@ -49,8 +49,8 @@ def read_map(path):
             p = line.split()
             if len(p) == 5:
                 landmarks.append((int(p[1]), int(p[2]), int(p[3]), int(p[4])))
-        elif 48 <= c <= 57 or c == 45:
-            squares.append(line)
+        elif (48 <= c <= 57 or c == 45) and len(line.split()) == 10:
+            squares.append(line)   # a square's 10 fields (a line cut short would shift all the others)
     del lines, data
     tokens = np.array(b" ".join(squares).split(), dtype="S8")
     del squares
@@ -241,7 +241,7 @@ def graph(grid):
         a, b, c, d, corners = a[good], b[good], c[good], d[good], corners[good]
         rows.append(idx[b, a])
         cols.append(idx[d, c])
-        vals.append(step[d, c].astype(np.float64) * m / 10 * (1 + corners))
+        vals.append(step[d, c].astype(np.float64) * m / 10 * (1 + 5 * corners))
     n = int(ok.sum())
     grid.csr = csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n))
     return grid.csr
@@ -332,6 +332,7 @@ def cmd_red(a):
     # node (both ways count).
     pos = np.array([(n[2], n[3]) for n in nodes])
     edges = {}
+    corner_ways = set()   # ways past a wall's corner, which the live grid (no corner cut) may not walk
     for i, (name, kind, x, y) in enumerate(nodes):
         d = np.max(np.abs(pos - (x, y)), axis=1)
         near = [j for j in np.argsort(d) if j != i and d[j] <= a.radio][: a.vecinos * 2]
@@ -342,6 +343,12 @@ def cmd_red(a):
         for j, (c, path) in best:
             k = (min(i, j), max(i, j))
             if k not in edges or edges[k][0] > c:
+                cuts = sum(1 for (x1, y1), (x2, y2) in zip(path, path[1:])
+                           if x1 != x2 and y1 != y2 and (not grid.walk(x2, y1) or not grid.walk(x1, y2)))
+                if cuts:
+                    corner_ways.add(k)
+                else:
+                    corner_ways.discard(k)
                 pts = thin(path, a.cada)
                 if i > j:
                     pts.reverse()
@@ -379,6 +386,8 @@ def cmd_red(a):
     sizes = sorted((len(p) for p in parts.values()), reverse=True)
     print(f"net: {len(nodes)} nodes, {len(edges)} ways, {int((deg == 0).sum())} nodes with none -> {out}")
     print(f"  connected parts: {len(parts)}, the largest {sizes[:6]}")
+    print(f"  ways past a wall's corner (a diagonal the live grid may refuse): {len(corner_ways)}"
+          + (": " + ", ".join(f"{nodes[i][2]},{nodes[i][3]}-{nodes[j][2]},{nodes[j][3]}" for i, j in sorted(corner_ways)[:12]) if corner_ways else ""))
     named_alone = [nodes[v][0] for v in range(len(nodes)) if nodes[v][1] != "paso" and deg[v] == 0]
     if named_alone:
         print(f"  named nodes with no way: {', '.join(named_alone[:20])}")
@@ -404,21 +413,65 @@ def read_net(path):
     return nodes, adj
 
 
-def trip(nodes, adj, grid, sx, sy, gx, gy, reach=120, k=6):
-    """The live trip: up to k nodes within `reach` of each end (the nearer ones first) that a route over the shared map
-    reaches (the live code tries them with routeWithin), the net between them (Dijkstra), the points to walk."""
+def box_route(grid, ax, ay, bx, by, margin, unknown):
+    """As MapMemory::routeWithin: a search in the box round both ends grown by `margin`, no corner cut; known walkable
+    10, shut gate 40, unknown `unknown` (0: no way; the game judges those by its world files, which this script has
+    not). The cost in tenths of a tile, or None."""
+    x0, y0 = min(ax, bx) - margin, min(ay, by) - margin
+    w, h = abs(bx - ax) + 2 * margin + 1, abs(by - ay) + 2 * margin + 1
+    step = np.full((h, w), unknown, dtype=np.int32)
+    gx0, gy0 = max(x0, grid.x0), max(y0, grid.y0)
+    gx1, gy1 = min(x0 + w, grid.x0 + grid.w), min(y0 + h, grid.y0 + grid.h)
+    if gx1 > gx0 and gy1 > gy0:
+        c = grid.cls[gy0 - grid.y0:gy1 - grid.y0, gx0 - grid.x0:gx1 - grid.x0]
+        sub = step[gy0 - y0:gy1 - y0, gx0 - x0:gx1 - x0]
+        sub[c != UNKNOWN] = 0
+        sub[c == WALK] = 10
+        sub[c == GATE] = 40
+    step[ay - y0, ax - x0] = 10
+    step[by - y0, bx - x0] = max(step[by - y0, bx - x0], 10)
+    start, goal = (ay - y0) * w + (ax - x0), (by - y0) * w + (bx - x0)
+    cost = {start: 0}
+    heap = [(0, start)]
+    while heap:
+        c, cell = heapq.heappop(heap)
+        if cell == goal:
+            return c
+        if c > cost[cell]:
+            continue
+        y, x = divmod(cell, w)
+        for dx, dy, m in ((1, 0, 10), (-1, 0, 10), (0, 1, 10), (0, -1, 10), (1, 1, 14), (1, -1, 14), (-1, 1, 14), (-1, -1, 14)):
+            nx, ny = x + dx, y + dy
+            if nx < 0 or ny < 0 or nx >= w or ny >= h or not step[ny, nx] or (dx and dy and (not step[y, nx] or not step[ny, x])):
+                continue
+            nc = c + step[ny, nx] * m // 10
+            n = ny * w + nx
+            if nc < cost.get(n, 1 << 60):
+                cost[n] = nc
+                heapq.heappush(heap, (nc, n))
+    return None
+
+
+def trip(nodes, adj, grid, sx, sy, gx, gy, reach=120, tries=8, keep=4, margin=24, unknown=0):
+    """The live trip (RouteNet::work): the nodes within `reach` of each end, nearest as the crow flies first, `tries`
+    of them tried with a box search (`margin`), the first `keep` reached kept; the net between them (Dijkstra)."""
     pos = np.array([(n[0], n[1]) for n in nodes])
 
-    def ends(x, y):
+    def ends(x, y, to_node):
         d = np.max(np.abs(pos - (x, y)), axis=1)
-        cand = [int(j) for j in np.argsort(d)[: 4 * k] if d[j] <= reach]
-        s = grid.snap(x, y, 12)
-        if not s:
-            return {}
-        found = dijkstra(grid, s[0], s[1], reach * 22, {j: (nodes[j][0], nodes[j][1]) for j in cand})
-        return {j: c for j, (c, _) in sorted(found.items(), key=lambda kv: kv[1][0])[:k]}
+        cand = [int(j) for j in np.argsort(d, kind="stable") if d[j] <= reach][:tries]
+        out = {}
+        for j in cand:
+            nx, ny = nodes[j][0], nodes[j][1]
+            c = box_route(grid, x, y, nx, ny, margin, unknown) if to_node else box_route(grid, nx, ny, x, y, margin, unknown)
+            if c is not None:
+                out[j] = c
+                if len(out) >= keep:
+                    break
+        return out
 
-    a, b = ends(sx, sy), ends(gx, gy)
+    snapped = grid.snap(gx, gy, 16) or (gx, gy)   # as MapMemory::nearestWalkable
+    a, b = ends(sx, sy, True), ends(snapped[0], snapped[1], False)
     if not a or not b:
         return None, a, b
     dist = {j: c for j, c in a.items()}
@@ -463,7 +516,7 @@ def cmd_consulta(a):
         s, g = q.split(":")
         sx, sy = map(int, s.split(","))
         gx, gy = map(int, g.split(","))
-        r, ea, eb = trip(nodes, adj, grid, sx, sy, gx, gy)
+        r, ea, eb = trip(nodes, adj, grid, sx, sy, gx, gy, tries=a.intentos, margin=a.margen, unknown=a.desconocido)
         if not r:
             print(f"{sx},{sy} -> {gx},{gy}: no trip (start nodes {len(ea)}, goal nodes {len(eb)})")
             continue
@@ -493,6 +546,9 @@ def main():
     q = sub.add_parser("consulta")
     q.add_argument("--comun", required=True)
     q.add_argument("--red", required=True)
+    q.add_argument("--intentos", type=int, default=8, help="nodes tried near each end (RouteNet kTry)")
+    q.add_argument("--margen", type=int, default=24, help="the stretches' box margin (RouteNet kStretchMargin)")
+    q.add_argument("--desconocido", type=int, default=0, help="unknown tiles' step (0 no way, 22 as the game when its files say walkable)")
     q.add_argument("viajes", nargs="+", help="x,y:x,y")
     a = ap.parse_args()
     {"comun": cmd_comun, "red": cmd_red, "consulta": cmd_consulta}[a.cmd](a)

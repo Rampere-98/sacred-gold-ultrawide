@@ -2304,6 +2304,46 @@ bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, i
     return true;
 }
 
+bool MapMemory::nearestWalkable(int layer, int x, int y, int radius, int& outX, int& outY)
+{
+    const std::lock_guard lock(g_lock);
+    ensureLoaded();
+    const auto walkable = [&](int tx, int ty) {
+        if (const Cell* c = find(layer, tx, ty); c && (c->visits || c->scan == 1))
+        {
+            return true;
+        }
+        if (const Cell* c = find(layer, tx, ty); c && (c->blocked >= 2 || c->scan == 2))
+        {
+            return false;   // this copy's own word first
+        }
+        const auto it = g_shared.find(chunkKey(layer, tx, ty));
+        return it != g_shared.end() &&
+               (*it->second)[((ty & (kChunkSide - 1)) << kChunkShift) | (tx & (kChunkSide - 1))] == kSharedWalk;
+    };
+    for (int r = 0; r <= radius; ++r)
+    {
+        int bestD = INT32_MAX;
+        for (int dy = -r; dy <= r; ++dy)
+        {
+            for (int dx = -r; dx <= r; ++dx)
+            {
+                if (std::max(std::abs(dx), std::abs(dy)) == r && dx * dx + dy * dy < bestD && walkable(x + dx, y + dy))
+                {
+                    bestD = dx * dx + dy * dy;
+                    outX = x + dx;
+                    outY = y + dy;
+                }
+            }
+        }
+        if (bestD != INT32_MAX)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void MapMemory::blocked(int layer, int32_t x, int32_t y)
 {
     const std::lock_guard lock(g_lock);
