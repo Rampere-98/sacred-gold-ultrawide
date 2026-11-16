@@ -1,0 +1,9 @@
+Sacred Gold ModKit
+Copyright (C) 2026 Rampere-98
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
+License as published by the Free Software Foundation, version 3 of the License (see LICENSE).
+
+The graphics body (the main branch: ultrawide, Direct3D 9 backend, UI scaling, gamepad) is based on SacredBild by
+kirides, https://github.com/kirides/sacred-bild, licensed under the GNU GPL v3. Its own notices are kept in the
+source files and in MOTOR.md.
