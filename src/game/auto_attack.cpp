@@ -7273,8 +7273,26 @@ namespace
             // The quest's own creature is spoken to whatever its side (the player, 2026-11-13: the lost sheep Erica,
             // DQ_15005, «!» over it and the agent standing by: an animal's side is none of the townsfolk's, 8 «talkable
             // false» in a morning); an enemy was attacked above.
-            const bool questCreature = speakTo && npc && npc->asCreature();
-            const bool talkNow = (talkable(npc) || questCreature) && !isHireling(who) && failed < 4 &&
+            // Not the hero's own horse (the stuck solver, 2026-11-16, A5: «Licor de lenteja», side quest 15036, from 08:10:
+            // the creature to speak to resolved to 1ab9, the id of the hero's horse («getting off horse 1ab9»): side 4,
+            // dialog 0, flags 4008040, health 400; «not spoken to: loaded true, talkable true», six tries and 30 s again,
+            // 97 «speaking to» in the day and the experience down 71 %): no dialog and no trade bit, on the horses' side.
+            const uint8_t* npcBytes = reinterpret_cast<const uint8_t*>(npc);
+            const bool notSomeone = npcBytes && *reinterpret_cast<const uint32_t*>(npcBytes + kSide) == 4 &&
+                                    *reinterpret_cast<const uint32_t*>(npcBytes + 0x245) == 0 &&
+                                    !(*reinterpret_cast<const uint32_t*>(npcBytes + 0x14) & 0x80000);
+            if (speakTo && notSomeone)
+            {
+                static uint32_t s_toldHorse = 0;
+                if (s_toldHorse != who)
+                {
+                    s_toldHorse = who;
+                    LOG("AutoAttack: quest creature {:x} is a horse with no dialog (side 4): not spoken to; the goal is looked "
+                        "around instead", who);
+                }
+            }
+            const bool questCreature = speakTo && npc && npc->asCreature() && !notSomeone;
+            const bool talkNow = ((talkable(npc) && !notSomeone) || questCreature) && !isHireling(who) && failed < 4 &&
                                  (talked == g_talkedAt.end() || now - talked->second > again);
             if (speakTo && !talkNow)
             {
