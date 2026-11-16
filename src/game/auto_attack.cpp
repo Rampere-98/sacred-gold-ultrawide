@@ -9106,7 +9106,7 @@ void AutoAttack::onFrame()
         // Without the focus too (the stuck solver, 2026-11-13: the game opens it itself on a pick up, a chest, a
         // door; a copy without the focus never closed it, the key does nothing there: runs of 5-15).
         if (g_on && Act::may(Act::Kind::Windows) && inventory && inventory->visible() && !Gear::shopOpen() &&
-            !Gear::craftsmanOpen() && !Gear::storageOpen())
+            !Gear::craftsmanOpen() && !Gear::storageOpen() && !Gear::sorting())
         {
             if (!s_inventorySince)
             {
