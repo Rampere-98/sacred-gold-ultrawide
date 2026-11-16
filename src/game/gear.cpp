@@ -23,6 +23,7 @@
 #include <vector>
 #include <atomic>
 #include <cstring>
+#include <cstdio>
 #include <cstdint>
 #include <mutex>
 #include <format>
@@ -3348,6 +3349,31 @@ void Gear::onFrame(DWORD now, bool calm)
 {
     static std::once_flag once;
     std::call_once(once, install);
+    // A test of the weapon slots (the presets session): SacredBild-weapon-slot beside the exe, holding 1-5, takes
+    // that weapon slot as the key 1-5 does (the game's selectWeaponSlot, a player's action), once; the file removed.
+    static DWORD askedAt = 0;
+    if (g_ready && g_selectSlot && (!askedAt || now - askedAt > 1000))
+    {
+        askedAt = now | 1;
+        wchar_t exe[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring path = exe;
+        path = path.substr(0, path.find_last_of(L"\\/") + 1) + L"SacredBild-weapon-slot";
+        if (FILE* f = _wfopen(path.c_str(), L"rb"))
+        {
+            int slot = 0;
+            const int read = fscanf(f, "%d", &slot);
+            fclose(f);
+            DeleteFileW(path.c_str());
+            if (read == 1 && slot >= 1 && slot <= 5)
+            {
+                LOG("Gear: weapon slot {} asked by SacredBild-weapon-slot (a test)", slot);
+                g_switchTo = static_cast<uint32_t>(slot - 1);
+                g_slotSwitchAt = GetTickCount();
+                Inject::engineCall(&switchSlot, nullptr);
+            }
+        }
+    }
     // A shop opened: the merchant goes on the agent's map, where the hero stands (beside him).
     static uint32_t lastMerchant = 0;
     if (void* inv = g_ready ? inventory() : nullptr)
