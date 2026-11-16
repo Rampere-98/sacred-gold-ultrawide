@@ -57,7 +57,7 @@ namespace
     // A trip's whole working out (the coordinator, 2026-11-16: A8 took 108 s to find no node near 1317,2240, another
     // trip 27 s, eight copies holding the processor and this thread at the lowest priority): past it, given up, and
     // the old ways for the walk.
-    constexpr DWORD kBudgetMs = 10000;
+    constexpr DWORD kBudgetMs = 45000;  // 10 s gave every trip up live (A2-A8, 20:15: each stretch to a node 1.5-5 s on the low thread)
     constexpr int kStretchMargin = 24;
     constexpr int kOffTrip = 40;    // the hero this far from every point ahead: the trip is worked out again
 
