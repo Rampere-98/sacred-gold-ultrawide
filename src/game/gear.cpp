@@ -1550,8 +1550,7 @@ namespace
     }
 
     // A weapon of the hero's class alone (the player, 2026-11-16: «en las ranuras obligatoriamente armas exclusivas
-    // para su personaje»): its class mask (the low byte of info+4, a bit a class: Manolito, «Restricción de clase del
-    // ítem») one bit only, and the game's class test (canUse mode 1) passed by the hero.
+    // para su personaje»): its class mask one bit only, and the game's class test (canUse mode 1) passed by the hero.
     bool ownClassOnly(cCreature* hero, uint32_t id)
     {
         cObjectManager* objects = cObjectManager::instance();
@@ -1561,7 +1560,9 @@ namespace
         {
             return false;
         }
-        const uint8_t mask = info[4];
+        // u32 info+4 (Manolito, block BK-4, cArmor3D::canUse 0x5BA0E0): bits 0-5 Seraphim, Gladiator, Mage, Dark Elf,
+        // Wood Elf, Vampiress; 22 Dwarf, 23 Daemon (0xC0003F all eight); 0 the base type's, not known here: not alone.
+        const uint32_t mask = *reinterpret_cast<const uint32_t*>(info + 4) & 0xC0003Fu;
         return mask && !(mask & (mask - 1)) && fn<CanUse>(g_canUse)(hero, nullptr, id, 1) != 0;
     }
 
