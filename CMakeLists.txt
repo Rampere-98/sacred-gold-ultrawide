@@ -121,6 +121,7 @@ set(DDRAW_SOURCES
   src/ddraw9/format.cpp
   src/ddraw9/gpu.cpp
   src/ddraw9/surface.cpp
+  src/ddraw9/texture_pack.cpp
   src/ddraw9/vertex_buffer.cpp
   src/render/atlas.cpp
   src/render/batcher.cpp

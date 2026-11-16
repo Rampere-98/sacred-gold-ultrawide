@@ -10,6 +10,7 @@
 #include "config/render.h"
 #include "config/screenshot.h"
 #include "config/tactics.h"
+#include "config/textures.h"
 #include "config/ui.h"
 #include "log.h"
 
@@ -91,6 +92,8 @@ void ConfigFile::load(const std::wstring& gameDir)
     Config::ddraw.d3d9Path = readString(ini, L"DDraw", L"D3D9", L"");
     Config::ddraw.on12 = readBool(ini, L"DDraw", L"On12", Config::ddraw.on12);
     Config::ddraw.mediaFoundation = Config::ddraw.d3d9 || readBool(ini, L"DDraw", L"MediaFoundation", Config::ddraw.mediaFoundation);
+    Config::textures.dump = readBool(ini, L"Textures", L"Dump", Config::textures.dump);
+    Config::textures.replace = readBool(ini, L"Textures", L"Replace", Config::textures.replace);
     Config::display.width = readInt(ini, L"Display", L"Width", Config::display.width);
     Config::display.height = readInt(ini, L"Display", L"Height", Config::display.height);
     const std::wstring borderless = readString(ini, L"Display", L"Borderless", L"auto");

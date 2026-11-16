@@ -2,6 +2,7 @@
 #include "ddraw9/directdraw.h"
 #include "ddraw9/format.h"
 #include "ddraw9/gpu.h"
+#include "ddraw9/texture_pack.h"
 #include "log.h"
 
 #include <algorithm>
@@ -1045,6 +1046,17 @@ namespace DDraw9
                     m_dirty.store(true, std::memory_order_relaxed);     // locked elsewhere right now: next time
                 }
             }
+            if ((TexturePack::replacing() || TexturePack::dumping()) && refreshContent() && m_replaced)
+            {
+                if (!m_replacement)
+                {
+                    m_replacement = TexturePack::texture(m_hash, (m_desc.ddpfPixelFormat.dwFlags & DDPF_ALPHAPIXELS) != 0);
+                }
+                if (m_replacement)
+                {
+                    return m_replacement;
+                }
+            }
             return m_gpuTexture;
         }
         if (m_kind == Kind::RenderTarget)
@@ -1052,6 +1064,75 @@ namespace DDraw9
             return m_rtTexture;
         }
         return nullptr;
+    }
+
+    bool Surface::replaced(const void* iface)
+    {
+        if (!TexturePack::replacing() && !TexturePack::dumping())
+        {
+            return false;
+        }
+        Surface* surface = from(iface);
+        return surface && surface->refreshContent() && surface->m_replaced;
+    }
+
+    // Hashes the system memory copy if the game changed it since the last time (and dumps it with Dump=1).
+    // False if the hash isn't known: no system memory copy, or the surface is being written right now.
+    bool Surface::refreshContent()
+    {
+        if (m_kind != Kind::Texture || !m_sysTexture)
+        {
+            return false;
+        }
+        const DWORD uniqueness = m_uniqueness.load(std::memory_order_relaxed);
+        if (uniqueness == m_hashedUniqueness)
+        {
+            return m_hashValid;
+        }
+        std::scoped_lock lock(m_lock);
+        if (m_mapped || m_locked || m_dc)
+        {
+            return false;
+        }
+        d9::D3DLOCKED_RECT locked = {};
+        if (FAILED(m_sysTexture->LockRect(0, &locked, nullptr, D3DLOCK_READONLY)))
+        {
+            return false;
+        }
+        const UINT w = width(), h = height();
+        const uint8_t* bits = static_cast<const uint8_t*>(locked.pBits);
+        m_hash = TexturePack::hash(bits, locked.Pitch, Format::pitch(m_format, w), Format::rows(m_format, h), w, h,
+            static_cast<uint32_t>(m_format));
+        m_hashedUniqueness = uniqueness;
+        m_hashValid = true;
+        m_replaced = TexturePack::replacing() && TexturePack::has(m_hash);
+        m_replacement = nullptr;
+        constexpr uint8_t kMaxDumps = 16;
+        if (TexturePack::dumping() && m_dumps < kMaxDumps && TexturePack::wantsDump(m_hash))
+        {
+            ++m_dumps;
+            auto* argb = new (std::nothrow) uint32_t[size_t(w) * h];
+            const RECT all = {0, 0, static_cast<LONG>(w), static_cast<LONG>(h)};
+            Format::Image from = {const_cast<uint8_t*>(bits), locked.Pitch, w, h, m_format, m_desc.ddpfPixelFormat};
+            Format::Image to = {reinterpret_cast<uint8_t*>(argb), static_cast<int>(w * 4), w, h, d9::D3DFMT_A8R8G8B8,
+                Format::toPixelFormat(d9::D3DFMT_A8R8G8B8)};
+            if (argb && Format::copy(from, all, to, all, nullptr))
+            {
+                TexturePack::dump(m_hash, w, h, Format::name(m_format).c_str(), argb);
+            }
+            else
+            {
+                delete[] argb;
+                static bool logged = false;
+                if (!logged)
+                {
+                    logged = true;
+                    LOG("Textures: can't dump {} textures", Format::name(m_format));
+                }
+            }
+        }
+        m_sysTexture->UnlockRect(0);
+        return true;
     }
 
     // ------------------------------------------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 #include "render/atlas.h"
 #include "render/fvf.h"
 #include "game/d3d_stats.h"
+#include "ddraw9/surface.h"
 #include "log.h"
 
 #include <algorithm>
@@ -863,7 +864,7 @@ const Batcher::AtlasBinding& Batcher::atlasBinding(IDirectDrawSurface7* texture,
     }
     TextureAtlas::Entry& e = m_atlas->entry(texture);
     b.page = nullptr;
-    if (!e.eligible)
+    if (!e.eligible || DDraw9::Surface::replaced(texture))     // [Textures] Replace: the copy would show the original
     {
         b.skip = CAtlasSkipTexture;
     }
