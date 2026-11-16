@@ -23,6 +23,13 @@ namespace Teleports
     // The stairs tree's anchors on `layer` within `radius` tiles of (tx, ty): where the hero walks to go through.
     std::vector<std::pair<int, int>> anchorsNear(int layer, int tx, int ty, int radius);
 
+    // A cave's way in or out as the game fires it (Manolito, block BE, 2026-11-16): tpreinz<X>/tprausz<X> are only
+    // the landings; the tile that jumps is the script's zone tprein<X>/tpraus<X>, a few tiles off (cave 5.2: out at
+    // 5372,338 beside the landing 5368,338; cave 2.3: in at 3047,2892 beside 3042,2892). Live, those are the map's
+    // dungeon marks (class 2) of the vector [0xAACF80+0x430 .. +0x434), records of 0x18 bytes, +4 x and +8 y in tiles,
+    // +0x10 the class. The mark within `radius` tiles of (tx, ty) nearest to it; false if none.
+    bool caveTriggerNear(int tx, int ty, int radius, int& ox, int& oy);
+
     // World units per tile (the hero's x and y at +0x1C/+0x20, its layer at +0x24).
     constexpr double kWorldPerTile = 53.66563;
 

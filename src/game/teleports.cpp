@@ -171,6 +171,39 @@ std::vector<std::pair<int, int>> Teleports::anchorsNear(int layer, int tx, int t
     return out;
 }
 
+bool Teleports::caveTriggerNear(int tx, int ty, int radius, int& ox, int& oy)
+{
+    const auto* vec = reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x430);
+    const uint8_t* begin = vec[0];
+    const uint8_t* end = vec[1];
+    if (!begin || end <= begin || (end - begin) % 0x18 != 0 || end - begin > 0x18 * 4096 ||
+        IsBadReadPtr(begin, static_cast<UINT_PTR>(end - begin)))
+    {
+        return false;
+    }
+    double best = 1e18;
+    for (const uint8_t* r = begin; r < end; r += 0x18)
+    {
+        if (*reinterpret_cast<const int8_t*>(r + 0x10) != 2)
+        {
+            continue;
+        }
+        const int x = *reinterpret_cast<const int32_t*>(r + 4), y = *reinterpret_cast<const int32_t*>(r + 8);
+        if (std::abs(x - tx) > radius || std::abs(y - ty) > radius)
+        {
+            continue;
+        }
+        const double d = std::hypot(static_cast<double>(x - tx), static_cast<double>(y - ty));
+        if (d < best)
+        {
+            best = d;
+            ox = x;
+            oy = y;
+        }
+    }
+    return best < 1e17;
+}
+
 bool Teleports::heroAt(int& tx, int& ty, int& layer)
 {
     const uintptr_t om = *reinterpret_cast<const uintptr_t*>(0xAD5C40);

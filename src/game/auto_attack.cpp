@@ -4841,6 +4841,13 @@ namespace
         {
             if (!in.start && layer == 0 && std::abs(in.outX - gx) <= 10 && std::abs(in.outY - gy) <= 10)
             {
+                // A cave's way in is the script's zone beside the landing (Manolito, block BE: cave 2.3, landing
+                // 3042,2892, zone 3047,2892), the one the agent goes for.
+                if (int cx = 0, cy = 0; Teleports::caveTriggerNear(in.outX, in.outY, 8, cx, cy))
+                {
+                    ways.emplace_back(cx, cy);
+                    continue;
+                }
                 ways.emplace_back(in.outX, in.outY);
             }
         }
@@ -4925,6 +4932,12 @@ namespace
             }
             else if (!in.start && std::abs(in.inX - htx) <= Whereabouts::kRadius && std::abs(in.inY - hty) <= Whereabouts::kRadius)
             {
+                // A cave's way out is the script's zone beside the landing (Manolito, block BE: A5 stood on the
+                // landing 5368,338 of cave 5.2 with no jump; the zone is 5372,338), first.
+                if (int cx = 0, cy = 0; Teleports::caveTriggerNear(in.inX, in.inY, 8, cx, cy))
+                {
+                    ways.emplace_back(cx, cy);
+                }
                 for (const auto& a : Teleports::anchorsNear(layer, in.inX, in.inY, 6))
                 {
                     ways.push_back(a);
@@ -4934,7 +4947,11 @@ namespace
                      std::abs(in.outY - hty) <= Whereabouts::kRadius)
             {
                 // A house's door in the yard (HQ_HE_3_3_1's tprausz tiles, Manolito): the landing itself and the
-                // stairs anchors beside it.
+                // stairs anchors beside it; a cave's way in (the script's zone beside the landing, block BE) first.
+                if (int cx = 0, cy = 0; Teleports::caveTriggerNear(in.outX, in.outY, 8, cx, cy))
+                {
+                    ways.emplace_back(cx, cy);
+                }
                 ways.emplace_back(in.outX, in.outY);
                 for (const auto& a : Teleports::anchorsNear(layer, in.outX, in.outY, 6))
                 {
@@ -5383,6 +5400,25 @@ namespace
         if (static_cast<int>(now - g_doorHoldUntil) < 0 || static_cast<int>(now - g_craftHoldUntil) < 0)
         {
             return;     // on the way to the door just clicked, or by a craftsman whose window is being worked
+        }
+        // By an open shop: nothing new until Gear's trip is through (the player, 2026-11-16: «no les da tiempo a
+        // comercializar todo antes de irse»; A2 opened 85e's shop at 03:08:40, chose to farm that same second and
+        // walked off 131 tiles, the shop closing on «its merchant is not near» after 4 sales). Up to 3 min, as a
+        // trade flag left set by a death in the shop must not hold the agent for ever.
+        {
+            static DWORD s_shopHoldSince = 0;
+            if (Gear::shopOpen())
+            {
+                s_shopHoldSince = s_shopHoldSince ? s_shopHoldSince : now;
+                if (now - s_shopHoldSince < 180000)
+                {
+                    return;
+                }
+            }
+            else
+            {
+                s_shopHoldSince = 0;
+            }
         }
         // Shut in with a door that opens near (the player, 2026-11-10: «la cueva tiene puertas que el agente no sabe
         // abrir»; the cave was worth staying in, only the way on was shut): opened at once, the way on before the way
