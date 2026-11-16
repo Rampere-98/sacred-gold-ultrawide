@@ -7606,19 +7606,36 @@ namespace
     // continuar el entrenamiento»): closed with Escape once it has stood 3 s. The player's own is never closed (the
     // code reviewer, E1: clicks alone do not tell it): a menu that came up within 2.5 s of a physical Escape, or
     // that sees a physical key or click of the player's while open, is theirs until it shuts.
-    void watchEscapeMenu(DWORD now, bool on, DWORD& since, DWORD& toldAt)
+    // The player's own keys and buttons, sampled every 50 ms by the watcher's thread (the code reviewer, E9: a press
+    // lasts 80-150 ms, a look every 500 ms missed four in five). The physical state is the whole system's: it counts
+    // only with this game in front (a copy playing without the focus would otherwise take the player's clicks in
+    // another program for theirs). physicallyDown and playerClicks keep no state, so two threads may call them; keep
+    // them on the 0x8000 bit (the low bit is shared by every caller).
+    std::atomic<DWORD> g_physicalEscAt{0}, g_physicalInputAt{0};
+
+    void sampleInput()
     {
-        static DWORD s_physicalEscAt = 0;
-        static bool s_players = false;
-        // The keys and buttons read are the whole system's: they count only with this game in front (a copy playing
-        // without the focus would otherwise take the player's clicks in another program for theirs).
         DWORD frontPid = 0;
         GetWindowThreadProcessId(GetForegroundWindow(), &frontPid);
-        const bool front = frontPid == GetCurrentProcessId();
-        if (front && physicallyDown(VK_ESCAPE))
+        if (frontPid != GetCurrentProcessId())
         {
-            s_physicalEscAt = now;
+            return;
         }
+        const DWORD now = GetTickCount();
+        if (physicallyDown(VK_ESCAPE))
+        {
+            g_physicalEscAt = now;
+            g_physicalInputAt = now;
+        }
+        else if (playerClicks() || physicallyDown(VK_RETURN))
+        {
+            g_physicalInputAt = now;
+        }
+    }
+
+    void watchEscapeMenu(DWORD now, bool on, DWORD& since, DWORD& toldAt)
+    {
+        static bool s_players = false;
         const bool open = on && escapeMenuVisible();
         if (!open)
         {
@@ -7629,9 +7646,11 @@ namespace
         if (!since)
         {
             since = now;
-            s_players = s_physicalEscAt && now - s_physicalEscAt < 2500;
+            const DWORD esc = g_physicalEscAt;
+            s_players = esc && now - esc < 2500;
         }
-        if (front && (playerClicks() || physicallyDown(VK_ESCAPE) || physicallyDown(VK_RETURN)))
+        const DWORD input = g_physicalInputAt;
+        if (input && static_cast<int>(input - since) >= 0)
         {
             s_players = true;
         }
@@ -7654,7 +7673,11 @@ namespace
         DWORD since = 0, toldAt = 0, menuSince = 0, menuToldAt = 0;
         for (;;)
         {
-            Sleep(500);
+            for (int i = 0; i < 10; ++i)
+            {
+                Sleep(50);
+                sampleInput();
+            }
             const bool on = *static_cast<volatile bool*>(&g_on);
             watchEscapeMenu(GetTickCount(), on, menuSince, menuToldAt);
             if (!on || !UiNav::portalBoxOpen())
