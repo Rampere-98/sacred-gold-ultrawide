@@ -5860,8 +5860,11 @@ namespace
             else if (now - s_since > (layer != 0 ? 90000u : 25000u) * static_cast<DWORD>(s_step + 1))
             {
                 ++s_step;
-                LOG("AutoAttack: no progress for {} s on this spot (step {}): the goal left {} min, a walk out",
-                    (now - s_since) / 1000, s_step, 3 * s_step);
+                LOG("AutoAttack: no progress for {} s on this spot (step {}): the goal left {} min, a walk out [intent {}, "
+                    "routing {}, mounted {}, fighting {}]",
+                    (now - s_since) / 1000, s_step, 3 * s_step, static_cast<int>(g_intent), ClickWalk::routing(),
+                    *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x1EC) != 0,
+                    CombatState::action(self) == CombatState::Fighting);
                 Findings::note("stuck", self->x, self->y, "no progress for {} s (step {})", (now - s_since) / 1000, s_step);
                 ClickWalk::cancel();
                 if (!g_questBook.empty())
@@ -8332,7 +8335,11 @@ static bool keepDistance(DWORD now, uint32_t id)
     // as far, his health is the thinnest.
     // The class's plan may say otherwise ([Distance] Kite: 0 never, 1 always; docs/Planes-de-combate.md).
     const Mind::Plan& cp = Mind::plan();
-    const bool kites = cp.kite >= 0 ? cp.kite == 1 : (hero.ranged || hero.cls == HeroProfile::Class::BattleMage);
+    // Not with the melee weapon in hand (the stuck solver, 2026-11-16, A3 since 09:10: 204 steps back in 95 min with the
+    // weapon kind 4 «cuerpo a cuerpo», the art 200 a weapon art; the fights that had a step back made 12,4 exp/s against
+    // 14,1 of the others, and 15,5 against 20,5 from 04:00 to 09:10).
+    const bool kites = cp.kite >= 0 ? cp.kite == 1
+                                    : (hero.ranged || (hero.cls == HeroProfile::Class::BattleMage && hero.weaponKind != 4));
     if (!hero.valid || !kites || hero.mounted || Whereabouts::area().shutIn)
     {
         return false;
