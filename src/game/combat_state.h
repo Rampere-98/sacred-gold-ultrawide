@@ -21,6 +21,14 @@ namespace CombatState
     // recover intent): AutoPotion drinks within 2 s of this, the hero below 70 %, as in an emergency.
     inline std::atomic<DWORD> drinkWantedAt{0};
 
+    // The fight as Tactics last weighed it (its arts' choice), for the weapon slot choice (ArtPresets): the most
+    // enemies an area art would catch, the target worth single blows, the hero hard pressed. situationAt: when (tick),
+    // 0 never; older than a moment, it says nothing.
+    inline std::atomic<int> clusterSize{0};
+    inline std::atomic<bool> strongTarget{false};
+    inline std::atomic<bool> danger{false};
+    inline std::atomic<DWORD> situationAt{0};
+
     // A creature's action, the low byte of cCreature +0x150 (seen live, 2026-11-08): 0 standing, 1 walking, 3
     // fighting, 6 dead (the game's isEnemy reads it), 9 casting a combat art, from the moment the art goes out until it
     // is done (2.5-4 s for an art of several blows), 4 casting a spell (about 1.5 s). A cast the game refuses (the art

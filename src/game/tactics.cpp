@@ -1021,6 +1021,10 @@ namespace
                 }
             }
         }
+        CombatState::clusterSize = clusterSize;
+        CombatState::strongTarget = strong;
+        CombatState::danger = danger;
+        CombatState::situationAt = s.now ? s.now : 1;
         // Arts at the target only once it is near: further away the hero first walks there, and the art goes out late
         // or not at all (the plain attack brings the hero close meanwhile).
         bool inReach = false;

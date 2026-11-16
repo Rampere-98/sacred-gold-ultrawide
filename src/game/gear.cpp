@@ -5,6 +5,9 @@
 #include "game/aim_assist.h"
 #include "game/auto_attack.h"
 #include "game/gear.h"
+#include "game/combat_state.h"
+#include "game/hero_build.h"
+#include "game/tactics.h"
 #include "game/granny_async.h"
 #include "game/map_memory.h"
 #include "game/modkit_menu.h"
@@ -3412,13 +3415,52 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
         }
         return tiles > 5.0f ? damage * (prefers ? 1.8f : 1.25f) : damage * (prefers ? 1.5f : 0.9f);
     };
-    const float current = weigh(active, slotDamage(hero, pack, active, target));
+    // The slot's art preset (ArtPresets, the player 2026-11-16: «diversificar el combate»): the arts it brings
+    // against the fight as Tactics weighs it. Area arts with a group, single blows at a strong enemy, a heal hard
+    // pressed; mounted, only the arts the game allows there. Up to 45 % more; exactly 1 with the presets off, a slot
+    // without one, or no fresh look at the fight.
+    float fit[5] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    std::string fits;
+    const DWORD seenAt = CombatState::situationAt.load();
+    if (HeroBuild::presetsOn() && seenAt && GetTickCount() - seenAt < 2000)
+    {
+        const int cluster = CombatState::clusterSize.load();
+        const bool strong = CombatState::strongTarget.load(), danger = CombatState::danger.load();
+        const bool group = cluster >= 3 || (danger && cluster >= 2);
+        const bool riding = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x1EC) != 0;
+        std::vector<Tactics::ArtFact> facts;
+        if (Tactics::artFacts(facts))
+        {
+            for (int slot = 0; slot < open && slot < 5; ++slot)
+            {
+                uint32_t arts[5] = {};
+                if (!HeroBuild::presetArts(slot, arts))
+                {
+                    continue;
+                }
+                float bonus = 0.0f;
+                for (uint32_t art : arts)
+                {
+                    const auto f = std::find_if(facts.begin(), facts.end(), [&](const Tactics::ArtFact& a) { return art && a.art == art; });
+                    if (f == facts.end() || (riding && !f->mounted))
+                    {
+                        continue;
+                    }
+                    bonus += f->use == 2 && group ? 0.15f : f->use == 3 && strong ? 0.15f : f->use == 1 && danger ? 0.2f : 0.0f;
+                }
+                fit[slot] = 1.0f + std::min(bonus, 0.45f);
+            }
+            fits = std::format(" presets {:.2f}/{:.2f}/{:.2f}/{:.2f}/{:.2f} (group {}, strong {}, danger {}{})", fit[0],
+                               fit[1], fit[2], fit[3], fit[4], cluster, strong, danger, riding ? ", riding" : "");
+        }
+    }
+    const float current = weigh(active, slotDamage(hero, pack, active, target)) * fit[active];
     int best = active;
     float bestDamage = current;
     std::string each;
     for (int slot = 0; slot < open; ++slot)
     {
-        const float d = slot == active ? 0.0f : weigh(slot, slotDamage(hero, pack, slot, target));
+        const float d = slot == active ? 0.0f : weigh(slot, slotDamage(hero, pack, slot, target)) * fit[slot];
         each += std::to_string(slot + 1) + "=" + std::to_string(static_cast<int>(slot == active ? current : d)) + " ";
         if (d > bestDamage)
         {
@@ -3431,7 +3473,7 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
     if (open > 1 && (!s_toldAt || GetTickCount() - s_toldAt > 120000))
     {
         s_toldAt = GetTickCount();
-        LOG("Gear: weapon slots against {:x}: {}(active {})", targetId, each, active + 1);
+        LOG("Gear: weapon slots against {:x}: {}(active {}){}", targetId, each, active + 1, fits);
     }
     // Only for a clear gain (30 %), and not within 20 s of the last switch: no switching back and forth (the analyst,
     // 2026-11-12, docs/Criterios.md: the 4502AE crashes came a few ms after a slot switch; 15 % and 10 s let it flip).
@@ -3444,9 +3486,9 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
         return false;
     }
     g_slotSwitchAt = GetTickCount();
-    LOG("Gear: weapon slot {} -> {} against {:x} (expected damage {:.0f} -> {:.0f}; its resistances {:.0f}/{:.0f}/{:.0f}/{:.0f})",
+    LOG("Gear: weapon slot {} -> {} against {:x} (expected damage {:.0f} -> {:.0f}; its resistances {:.0f}/{:.0f}/{:.0f}/{:.0f}){}",
         active + 1, best + 1, targetId, current, bestDamage, resistanceOf(target, 0), resistanceOf(target, 1),
-        resistanceOf(target, 2), resistanceOf(target, 3));
+        resistanceOf(target, 2), resistanceOf(target, 3), fits);
     g_switchTo = static_cast<uint32_t>(best);
     Inject::engineCall(&switchSlot, nullptr);
     return true;

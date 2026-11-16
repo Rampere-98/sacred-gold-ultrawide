@@ -21,6 +21,7 @@
 #include <string>
 #include <cwchar>
 #include <cstdio>
+#include <format>
 #include <vector>
 
 using namespace Sacred;
@@ -593,6 +594,7 @@ namespace
     struct Preset
     {
         bool set = false;
+        bool agent = false;         // composed by the agent (no bar the player made): «SlotNBy=agent» in the file
         uint8_t entries[cUI_Taskbar2::slotCount][kArtEntrySize] = {};
     };
     struct PresetState
@@ -604,9 +606,19 @@ namespace
         DWORD dirtyAt = 0;          // the file written 5 s after the last change
         DWORD restores[8] = {};
         int nextRestore = 0;
+        bool composed = false;      // the slots without a preset given one (once per hero)
     };
     PresetState g_presets;
     std::atomic<bool> g_presetsWorking{false};
+    // The presets' arts for Gear's weapon slot choice (another thread): a copy, written after each pass.
+    struct PublishedPreset
+    {
+        bool set = false;
+        uint32_t arts[cUI_Taskbar2::slotCount] = {};
+    };
+    std::mutex g_publishedLock;
+    PublishedPreset g_published[kPresetSlots];
+    static_assert(cUI_Taskbar2::slotCount == 5, "presetArts hands out 5 art slots");
     // The taskbar's art slot selection, as the keys 6-0 (Manolito, block BF: ENG 006E1A20, thiscall(taskbar, u16 slot,
     // u32 net), ret 8). After the bar is written the selected slot is selected again, or the engine's right click
     // (+0x58/+0x5A) keeps the art that was there before (the game's own UI does the same after a drop). Resolved on its
@@ -649,6 +661,9 @@ namespace
                 out[i] = static_cast<uint8_t>(std::wcstoul(two, nullptr, 16));
             }
             p.set = true;
+            GetPrivateProfileStringW(section.c_str(), (L"Slot" + std::to_wstring(w + 1) + L"By").c_str(), L"", buf, 512,
+                                     path.c_str());
+            p.agent = std::wcscmp(buf, L"agent") == 0;
         }
     }
 
@@ -671,6 +686,97 @@ namespace
                 hex += two;
             }
             WritePrivateProfileStringW(section.c_str(), (L"Slot" + std::to_wstring(w + 1)).c_str(), hex.c_str(), path.c_str());
+            // The agent's mark; a bar the player reworked loses it (nullptr: the key removed).
+            WritePrivateProfileStringW(section.c_str(), (L"Slot" + std::to_wstring(w + 1) + L"By").c_str(),
+                                       p.agent ? L"agent" : nullptr, path.c_str());
+        }
+    }
+
+    // A preset for each weapon slot that has none (the player, 2026-11-16: «diversificar el combate y ampliar las
+    // tácticas»): a bar of learned arts only, with a leaning by slot (the first one without a preset leans to the area
+    // arts, the next to the single blows, and so on), a heal and a lasting effect in each. Data only: the bar changes
+    // when the hero takes that weapon slot, as with the player's own presets. A slot with a preset is never touched.
+    void composePresets(int open, const std::vector<Tactics::ArtFact>& facts)
+    {
+        using Use = Config::Tactics::Art;
+        const auto of = [&](Use use) {
+            std::vector<const Tactics::ArtFact*> list;
+            for (const Tactics::ArtFact& f : facts)
+            {
+                if (f.use == static_cast<int>(use) && f.slotKind)
+                {
+                    list.push_back(&f);
+                }
+            }
+            std::sort(list.begin(), list.end(), [](auto* a, auto* b) { return a->level > b->level; });
+            return list;
+        };
+        const auto area = of(Use::Area), single = of(Use::Single), heal = of(Use::Heal), buff = of(Use::Buff),
+                   unknown = of(Use::Auto);
+        // Two leanings are only worth it with arts of both kinds.
+        if (area.empty() || single.empty())
+        {
+            LOG("ArtPresets: no preset composed ({} area arts, {} single blows known)", area.size(), single.size());
+            return;
+        }
+        int lean = 0;
+        for (int w = 0; w < open && w < kPresetSlots; ++w)
+        {
+            Preset& p = g_presets.presets[w];
+            if (p.set)
+            {
+                continue;
+            }
+            const bool group = lean++ % 2 == 0;
+            std::vector<const Tactics::ArtFact*> pick;
+            const auto add = [&](const std::vector<const Tactics::ArtFact*>& from, size_t most) {
+                for (const Tactics::ArtFact* f : from)
+                {
+                    if (most == 0 || static_cast<int>(pick.size()) >= open)
+                    {
+                        return;
+                    }
+                    if (std::none_of(pick.begin(), pick.end(), [&](auto* q) { return q->art == f->art; }))
+                    {
+                        pick.push_back(f);
+                        --most;
+                    }
+                }
+            };
+            add(group ? area : single, 2);
+            add(heal, 1);
+            add(buff, 1);
+            add(group ? area : single, 5);
+            add(group ? single : area, 5);
+            add(unknown, 5);
+            p = Preset{};
+            std::string names;
+            for (size_t slot = 0; slot < pick.size(); ++slot)
+            {
+                uint8_t* e = p.entries[slot];
+                *reinterpret_cast<uint16_t*>(e) = pick[slot]->slotKind;
+                *reinterpret_cast<uint32_t*>(e + 4) = pick[slot]->art;
+                names += std::format("{:x} ", pick[slot]->art);
+            }
+            p.set = true;
+            p.agent = true;
+            g_presets.dirtyAt = GetTickCount() | 1;
+            LOG("ArtPresets: weapon slot {} given a preset leaning to {}: {}", w + 1,
+                group ? "groups (area arts)" : "single enemies (single blows)", names);
+        }
+    }
+
+    void publishPresets()
+    {
+        std::lock_guard<std::mutex> lock(g_publishedLock);
+        for (int w = 0; w < kPresetSlots; ++w)
+        {
+            g_published[w].set = g_presets.presets[w].set;
+            for (int slot = 0; slot < cUI_Taskbar2::slotCount; ++slot)
+            {
+                const uint8_t* e = g_presets.presets[w].entries[slot];
+                g_published[w].arts[slot] = *reinterpret_cast<const uint16_t*>(e) ? *reinterpret_cast<const uint32_t*>(e + 4) : 0;
+            }
         }
     }
 
@@ -704,6 +810,7 @@ namespace
             g_presets.heroId = hero->id;
             g_presets.cls = cls;
             loadPresets(cls);
+            publishPresets();
         }
         uint8_t* player = players + index * kPlayerSize;
         const int shown = std::clamp<int>(*reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(taskbar) +
@@ -722,6 +829,10 @@ namespace
             {
                 changed = changed || std::memcmp(p.entries[slot], entry(slot), kArtEntrySize) != 0;
                 std::memcpy(p.entries[slot], entry(slot), kArtEntrySize);
+            }
+            if (changed && p.set)
+            {
+                p.agent = false;    // the bar made over (the player's, or what the game put): no longer the agent's
             }
             p.set = true;
             if (changed)
@@ -836,6 +947,16 @@ namespace
         }
         // The same slot: whatever the bar holds now is its preset.
         snapshot(weapon);
+        if (!g_presets.composed && shown > 1)
+        {
+            std::vector<Tactics::ArtFact> facts;
+            if (Tactics::artFacts(facts))
+            {
+                g_presets.composed = true;
+                composePresets(shown, facts);
+            }
+        }
+        publishPresets();
         if (g_presets.dirtyAt && now - g_presets.dirtyAt > 5000)
         {
             savePresets();
@@ -908,6 +1029,23 @@ namespace
             g_settings.attributes, g_settings.skills, g_settings.learn);
         ModkitMenu::add({"Progreso del héroe", &drawMenu, &saveMenu});
     }
+}
+
+bool HeroBuild::presetsOn()
+{
+    return g_ready && g_setSlot && g_settings.presets;
+}
+
+bool HeroBuild::presetArts(int weaponSlot, uint32_t out[5])
+{
+    if (weaponSlot < 0 || weaponSlot >= kPresetSlots)
+    {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(g_publishedLock);
+    const PublishedPreset& p = g_published[weaponSlot];
+    std::memcpy(out, p.arts, sizeof(p.arts));
+    return p.set;
 }
 
 void HeroBuild::onFrame(DWORD now, bool calm)
