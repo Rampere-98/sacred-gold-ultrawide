@@ -1113,7 +1113,8 @@ namespace
         }
         g_landmarks.push_back({kind, static_cast<uint8_t>(layer), static_cast<int16_t>(tx), static_cast<int16_t>(ty)});
         g_dirty = true;
-        static const char* const names[] = {"merchant", "way in or out", "portal"};
+        static const char* const names[] = {"merchant", "way in or out", "portal", "storage chest"};
+        static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(MapMemory::Mark::Count), "a name per mark");
         LOG("MapMemory: {} found at {},{} on layer {}", names[static_cast<int>(kind)], tx, ty, layer);
     }
 
