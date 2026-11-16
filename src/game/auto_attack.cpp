@@ -6080,6 +6080,15 @@ namespace
                         (!s_storageFailedAt || now - s_storageFailedAt > 600000) &&
                         std::hypot(static_cast<double>(g_storage.x - self->x), static_cast<double>(g_storage.y - self->y)) <=
                             40.0 * kTileSize;
+        // The hero stays at the chest while the visit's work goes on (A4, 2026-11-16 20:37: a piece taken out, then
+        // off to the combo master with the chest's window half done: it closed behind him, the chest still marked in
+        // use). Gear ends the visit (closed, or 20 s with the window gone).
+        if (Gear::storageOpen() && !Gear::storagePending())
+        {
+            setIntent(Intent::Shop, "at the storage chest: its work under way");
+            g_roamAt = 0;
+            return;
+        }
         // Held from the click until the chest's window opens (A5, 2026-11-16: the quest took the hero away the next
         // tick, «its window never opened»); Gear gives the visit up after 20 s.
         if ((Gear::wantsStorage() || Gear::storagePending()) && (!Gear::storageOpen() || Gear::storagePending()) &&

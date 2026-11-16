@@ -3642,7 +3642,9 @@ namespace
                 cObjectManager* objects = cObjectManager::instance();
                 cObject* chest = objects ? objects->object(used) : nullptr;
                 const bool marked = chest && (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(chest) + 0x14) & 0x4000);
-                LOG("Gear: storage visit over ({}){}", g_storageDone.load() ? "closed" : "its window never opened",
+                LOG("Gear: storage visit over ({}){}", g_storageDone.load() ? "closed"
+                                                       : g_storageShown.load() ? "its window closed before the work was done"
+                                                                               : "its window never opened",
                     marked ? "; the chest still marked in use (0x4000)" : "");
                 g_storageId = 0;
                 g_storageDone = false;
@@ -4005,19 +4007,21 @@ namespace
             // crashed 1.7 s on, at an address in no module): the master's and the smith's work waits 15 s past the
             // last attack.
             const bool calm = !AutoAttack::foughtWithin(15000);
+            // No master's or smith's window while a storage visit is on (A4, 2026-11-16: the master's window opened
+            // 8 s after a piece came out of the chest, the chest's window half done).
             if (Act::may(Act::Kind::Storage) && storageStep(hero, pack))
             {
             }
             else if (buyHorse(hero))
             {
             }
-            else if (calm && g_wantCombo && makeCombo(hero))
+            else if (calm && !g_storageId.load() && g_wantCombo && makeCombo(hero))
             {
             }
-            else if (calm && g_wantSocket && socketAtSmith(hero, pack))
+            else if (calm && !g_storageId.load() && g_wantSocket && socketAtSmith(hero, pack))
             {
             }
-            else if (calm && g_settings.runes && g_canUse && Act::may(Act::Kind::Combos) && swapRunes(hero, pack))
+            else if (calm && !g_storageId.load() && g_settings.runes && g_canUse && Act::may(Act::Kind::Combos) && swapRunes(hero, pack))
             {
             }
             else if (shop && (g_settings.sell || trip) && sellOne(hero, pack))
