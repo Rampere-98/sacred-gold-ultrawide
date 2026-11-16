@@ -850,6 +850,14 @@ namespace
             loadPresets(cls);
             publishPresets();
         }
+        // The bar is the player's while the art bar is not the agent's to change ([Permisos] ArtBar at No): nothing
+        // kept or put back, and looked at afresh once it is (the bar then is the slot's in use).
+        if (!Act::may(Act::Kind::ArtBar))
+        {
+            g_presets.lastSlot = -1;
+            g_presets.pendingSlot = -1;
+            return;
+        }
         uint8_t* player = players + index * kPlayerSize;
         const int shown = std::clamp<int>(*reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(taskbar) +
             kTaskbarSlots), 0, cUI_Taskbar2::slotCount);
@@ -916,6 +924,11 @@ namespace
             if (weapon == g_presets.lastSlot)
             {
                 return;     // switched back before it was put back: the bar is still this slot's
+            }
+            if (p.set && !Act::allowed(Act::Kind::ArtBar, "put back the art preset of the weapon slot taken"))
+            {
+                g_presets.pendingSlot = weapon;     // asked again; the slots' presets kept as they are meanwhile
+                return;
             }
             if (p.set)
             {

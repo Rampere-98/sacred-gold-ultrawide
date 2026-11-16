@@ -1487,7 +1487,7 @@ namespace
             LOG("Gear: ranged weapons in the backpack: {} ({} usable), an empty weapon slot {}", seen, best ? "one" : "none",
                 empty >= 0 ? std::to_string(empty + 1) : std::string("none"));
         }
-        if (!best)
+        if (!best || !Act::allowed(Act::Kind::WeaponSlots, "put a ranged weapon in a weapon slot"))
         {
             return false;
         }
