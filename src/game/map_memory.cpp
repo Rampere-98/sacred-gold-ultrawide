@@ -2096,8 +2096,9 @@ bool MapMemory::routeWideAsync(int layer, int fromX, int fromY, int toX, int toY
 }
 
 bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, int kMargin,
-                            std::vector<std::pair<int, int>>& out)
+                            std::vector<std::pair<int, int>>& out, uint32_t maxMs)
 {
+    const DWORD enteredAt = GetTickCount();
     out.clear();
     // A box around both ends; too far apart for one search (32 bit: keep it to a few MB), no route.
     constexpr int kMaxSide = 1100;
@@ -2308,10 +2309,10 @@ bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, i
     unsigned pops = 0;
     while (!open.empty())
     {
-        if ((++pops & 0x3FFF) == 0 && GetTickCount() - searchStart > 30000)
+        if ((++pops & 0x3FF) == 0 && (GetTickCount() - searchStart > 30000 || GetTickCount() - enteredAt > maxMs))
         {
-            LOG("MapMemory: route {},{} to {},{} given up after {} s ({} steps, box {}x{})", fromX, fromY, toX, toY,
-                (GetTickCount() - searchStart) / 1000, pops, w, h);
+            LOG("MapMemory: route {},{} to {},{} given up after {} ms ({} in the search, {} steps, box {}x{})", fromX, fromY,
+                toX, toY, GetTickCount() - enteredAt, GetTickCount() - searchStart, pops, w, h);
             out.clear();
             return false;
         }

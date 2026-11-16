@@ -54,6 +54,10 @@ namespace
 
     constexpr int kReach = 120;     // nodes this near an end (tiles, the larger axis) are tried for it
     constexpr int kTry = 8, kKeep = 4;
+    // A trip's whole working out (the coordinator, 2026-11-16: A8 took 108 s to find no node near 1317,2240, another
+    // trip 27 s, eight copies holding the processor and this thread at the lowest priority): past it, given up, and
+    // the old ways for the walk.
+    constexpr DWORD kBudgetMs = 10000;
     constexpr int kStretchMargin = 24;
     constexpr int kOffTrip = 40;    // the hero this far from every point ahead: the trip is worked out again
 
@@ -169,7 +173,9 @@ namespace
 
     // The nodes near (x, y) on `layer` a route over the agent's map reaches (towards them, or from them to (x, y)):
     // the nearest first, at most kKeep. Not under g_lock (routeWithin takes the map's).
-    std::vector<End> ends(const std::vector<std::pair<int, int>>& around, int layer, int x, int y, bool toNode, int& tried)
+    // Each search gets what is left of the budget that ends at `deadline`; `late` set when it ran out.
+    std::vector<End> ends(const std::vector<std::pair<int, int>>& around, int layer, int x, int y, bool toNode, int& tried,
+                          DWORD deadline, bool& late)
     {
         std::vector<End> out;
         tried = 0;
@@ -179,11 +185,23 @@ namespace
             {
                 break;
             }
+            const DWORD now = GetTickCount();
+            if (static_cast<int32_t>(deadline - now) <= 0)
+            {
+                late = true;
+                break;
+            }
             ++tried;
             const Node& n = g_nodes[node];
             std::vector<std::pair<int, int>> cells;
-            const bool ok = toNode ? MapMemory::routeWithin(layer, x, y, n.x, n.y, kStretchMargin, cells)
-                                   : MapMemory::routeWithin(layer, n.x, n.y, x, y, kStretchMargin, cells);
+            const DWORD left = deadline - now;
+            const bool ok = toNode ? MapMemory::routeWithin(layer, x, y, n.x, n.y, kStretchMargin, cells, left)
+                                   : MapMemory::routeWithin(layer, n.x, n.y, x, y, kStretchMargin, cells, left);
+            if (!ok && static_cast<int32_t>(deadline - GetTickCount()) <= 0)
+            {
+                late = true;
+                break;
+            }
             if (ok)
             {
                 out.push_back({node, lengthOf(cells), std::move(cells)});
@@ -247,20 +265,28 @@ namespace
             nearStart = nearNodes(layer, fromX, fromY);
             nearGoal = nearNodes(layer, goalX, goalY);
         }
-        // g_nodes and g_ways are only written by load(), done above: read without the lock from here.
-        int triedA = 0, triedB = 0;
-        // No node within reach of one end: the stretches of the other end are not worked out (the stuck solver,
-        // 2026-11-16, A8: «no node reached near the goal (0 within 120 tiles, 0 tried), 107875 ms»: the hero's side was
-        // searched first, 108 s, for a goal in ground no node has been laid in).
+        // No node near one end: nothing to search for, the old ways at once.
         if (nearStart.empty() || nearGoal.empty())
         {
-            LOG("RouteNet: trip {},{} to {},{} on layer {}: no node within {} tiles of the {}: not worked out", fromX, fromY,
-                toX, toY, layer, kReach, nearStart.empty() ? "hero" : "goal");
+            LOG("RouteNet: trip {},{} to {},{} on layer {}: no node within {} tiles of the {}, {} ms", fromX, fromY, toX,
+                toY, layer, kReach, nearStart.empty() ? "hero" : "goal", GetTickCount() - t0);
             k.at = GetTickCount();
             return k;
         }
-        std::vector<End> a = ends(nearStart, layer, fromX, fromY, true, triedA);
-        std::vector<End> b = a.empty() ? std::vector<End>{} : ends(nearGoal, layer, goalX, goalY, false, triedB);
+        // g_nodes and g_ways are only written by load(), done above: read without the lock from here.
+        int triedA = 0, triedB = 0;
+        bool late = false;
+        const DWORD deadline = t0 + kBudgetMs;
+        std::vector<End> a = ends(nearStart, layer, fromX, fromY, true, triedA, deadline, late);
+        std::vector<End> b = a.empty() || late ? std::vector<End>{} : ends(nearGoal, layer, goalX, goalY, false, triedB, deadline, late);
+        if (late)
+        {
+            LOG("RouteNet: trip {},{} to {},{} on layer {}: given up after {} ms (the stretches to the nodes: {} tried near "
+                "the hero, {} near the goal): the old ways", fromX, fromY, toX, toY, layer, GetTickCount() - t0, triedA,
+                triedB);
+            k.at = GetTickCount();
+            return k;
+        }
         if (a.empty() || b.empty())
         {
             LOG("RouteNet: trip {},{} to {},{} on layer {}: no node reached near the {} ({} within {} tiles, {} tried), {} ms",

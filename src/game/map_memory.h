@@ -22,7 +22,9 @@ namespace MapMemory
     // The same over a wider box around both ends (margins 120 then 240 tiles), for a walk the narrow one found no
     // way for because the way round leaves it (A8, 2026-11-16: 73 tiles as the crow flies, 590 round the mountains).
     bool routeWide(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out);
-    bool routeWithin(int layer, int fromX, int fromY, int toX, int toY, int margin, std::vector<std::pair<int, int>>& out);
+    // `maxMs`: given up (none found) so long after the call, the wait for the map and the box's making counted.
+    bool routeWithin(int layer, int fromX, int fromY, int toX, int toY, int margin, std::vector<std::pair<int, int>>& out,
+                     uint32_t maxMs = 0xFFFFFFFFu);
     // routeWide on a low thread (A2, 2026-11-16: one on the frame's thread froze the game 39.6 s): true with the route
     // once one worked out for this goal (within 4 tiles) from near this start (12 tiles) is under a minute old; false
     // meanwhile, a search started if none runs.
