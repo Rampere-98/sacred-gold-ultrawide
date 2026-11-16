@@ -1690,6 +1690,35 @@ namespace
         {
             s_chestSince = 0;
         }
+        // The smith's and the combo master's with no craftsman of that trade beside the hero (A3, 2026-11-16: the
+        // smith's left open, «not worked in», and canSave «not now» for 15 min, as the stable's once): closed after 4 s.
+        struct Craft
+        {
+            size_t at;
+            uint32_t bit;
+            const char* what;
+        };
+        static constexpr Craft kCraft[2] = {{0x8C, 0x1000, "smith's"}, {0xB8, 0x4000, "combo master's"}};
+        static DWORD s_craftSince[2] = {};
+        for (int i = 0; i < 2; ++i)
+        {
+            uint8_t* w = *reinterpret_cast<uint8_t* const*>(ui + kCraft[i].at);
+            if (!visible(w) || (g_tradesNear.load() & kCraft[i].bit))
+            {
+                s_craftSince[i] = 0;
+                continue;
+            }
+            const DWORD now = GetTickCount();
+            if (!s_craftSince[i])
+            {
+                s_craftSince[i] = now ? now : 1;
+            }
+            else if (now - s_craftSince[i] > 4000)
+            {
+                close(w, kCraft[i].what, "no such craftsman near the hero");
+                s_craftSince[i] = 0;
+            }
+        }
     }
 
     // What the open shop takes (block AW, static): the merchant window [uiMgr +0x90], its goods child at +0x154
