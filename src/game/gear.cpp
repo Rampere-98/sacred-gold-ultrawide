@@ -2957,7 +2957,11 @@ namespace
             }
             // Only a base the hero would wear (the player, 2026-11-15: «mejora todo tipo de equipamiento, mismo aquella
             // que ni puede equiparse»): gems spent on something it cannot put on are wasted.
-            if (freeSockets(id) > 0 && bestSlot(hero, id, 0.0f) >= 0)
+            // And only of the hero's class (the player, 2026-11-16: the Wood Elf socketed 4 gems into a Seraphim's
+            // piece, 3487 gold): bestSlot reads the slots, not the class; canUse mode 1 is the class test alone, so a
+            // piece of its own class for a later level still counts.
+            if (freeSockets(id) > 0 && g_canUse && fn<CanUse>(g_canUse)(hero, nullptr, id, 1) != 0 &&
+                bestSlot(hero, id, 0.0f) >= 0)
             {
                 if (!base || !baseWorn)
                 {
