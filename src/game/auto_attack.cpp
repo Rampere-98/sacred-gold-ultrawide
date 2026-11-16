@@ -1921,16 +1921,6 @@ namespace
         {
             code = 0;
         }
-        else if (code == 0x20A && ++s_offSent > 4)
-        {
-            LOG("AutoAttack: 4 off events and the hero still up (mount field {:x}, controlled {:x}, horse {:x}): none for "
-                "a minute",
-                *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x1EC),
-                FrameHooks::engine() ? FrameHooks::engine()->controlled : 0u, horse);
-            s_offSent = 0;
-            s_offRestUntil = now + 60000;
-            code = 0;
-        }
         if (!code)
         {
             s_approachSince = 0;
@@ -1946,12 +1936,26 @@ namespace
                 ClickWalk::cancel();
                 HeroMove::stop();
                 s_stoppedAt = now;
+                g_doorHoldUntil = now + 1500;   // the roam's travel holds its orders: the event goes out 0.4 s on
                 return;
             }
             if (now - s_stoppedAt < 400)
             {
                 return;
             }
+        }
+        // Counted here, where the event is about to go out (the stuck solver, 2026-11-16, A8: counted before the stop
+        // and its 0.4 s wait, five frames made «4 off events» with none sent: 0 «getting off horse» in 600 lines, 10
+        // rests of a minute, the hero never off and AgentSave waiting for it 25 min).
+        if (code == 0x20A && ++s_offSent > 4)
+        {
+            LOG("AutoAttack: 4 off events and the hero still up (mount field {:x}, controlled {:x}, horse {:x}): none for "
+                "a minute",
+                *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x1EC),
+                FrameHooks::engine() ? FrameHooks::engine()->controlled : 0u, horse);
+            s_offSent = 0;
+            s_offRestUntil = now + 60000;
+            return;
         }
         if (code == 0x209 && !AutoAttack::canRide(const_cast<cCreature*>(self), const_cast<cCreature*>(steed)))
         {
@@ -6027,11 +6031,22 @@ namespace
             }
             const bool speakTo = who && who != 0xFFFFFFFFu;
             const cObject* speaker = speakTo && objects ? objects->object(who) : nullptr;
-            if (speaker && std::max(std::abs(static_cast<double>(speaker->x - self->x)),
-                                    std::abs(static_cast<double>(speaker->y - self->y))) < 60.0 * kTileSize)
+            // Loaded within 60 tiles the creature is the goal and stays so until 90 (the stuck solver, 2026-11-16: A8
+            // at 60 tiles on one axis, the goal flipped between the creature's tile 2916,3290 and the journal's
+            // 2907,3295 100 times in 14 min, each flip a new route and the progress watches back to zero).
+            static uint32_t s_speakerGoal = 0;
+            const double speakerFar = speaker ? std::max(std::abs(static_cast<double>(speaker->x - self->x)),
+                                                         std::abs(static_cast<double>(speaker->y - self->y)))
+                                              : 1e18;
+            if (speaker && speakerFar < (s_speakerGoal == who ? 90.0 : 60.0) * kTileSize)
             {
+                s_speakerGoal = who;
                 qx = speaker->x;
                 qy = speaker->y;
+            }
+            else if (s_speakerGoal == who && speakerFar >= 90.0 * kTileSize)
+            {
+                s_speakerGoal = 0;
             }
             // A fixed goal is gone to at the standable tile nearest it, not its centre (the stuck solver, 2026-11-11:
             // 3174,2794 lies inside a house's solid block, its yard 3 tiles off; walks to the blocked centre stopped
