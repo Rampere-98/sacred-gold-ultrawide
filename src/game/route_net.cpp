@@ -165,11 +165,11 @@ namespace
 
     // The nodes near (x, y) on `layer` a route over the agent's map reaches (towards them, or from them to (x, y)):
     // the nearest first, at most kKeep. Not under g_lock (routeWithin takes the map's).
-    std::vector<End> ends(const std::vector<std::pair<int, int>>& near, int layer, int x, int y, bool toNode, int& tried)
+    std::vector<End> ends(const std::vector<std::pair<int, int>>& around, int layer, int x, int y, bool toNode, int& tried)
     {
         std::vector<End> out;
         tried = 0;
-        for (const auto& [node, d] : near)
+        for (const auto& [node, d] : around)
         {
             if (static_cast<int>(out.size()) >= kKeep || tried >= kTry)
             {
@@ -190,18 +190,18 @@ namespace
 
     std::vector<std::pair<int, int>> nearNodes(int layer, int x, int y)
     {
-        std::vector<std::pair<int, int>> near;
+        std::vector<std::pair<int, int>> around;
         for (int i = 0; i < static_cast<int>(g_nodes.size()); ++i)
         {
             const Node& n = g_nodes[i];
             const int d = cheb(n.x, n.y, x, y);
             if (n.layer == layer && d <= kReach)
             {
-                near.push_back({i, d});
+                around.push_back({i, d});
             }
         }
-        std::sort(near.begin(), near.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
-        return near;
+        std::sort(around.begin(), around.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+        return around;
     }
 
     void addThinned(std::vector<std::pair<int, int>>& out, const std::vector<std::pair<int, int>>& cells, size_t every)
