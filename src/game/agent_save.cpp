@@ -652,6 +652,34 @@ void AgentSave::onFrame()
         }
         return;
     }
+    // The process's free address space: the game's save builds each block in one piece of memory (the quests' about
+    // 11 MB), and a 32-bit Sacred.exe has 2 GB (Manolito block BI: A2 crashed at 14:26 saving GAME11, the 11 MB asked
+    // for not there, D3D9On12 and the textures loaded). Too little in one piece: no save now (it would only crash).
+    {
+        size_t largest = 0, total = 0;
+        MEMORY_BASIC_INFORMATION mbi{};
+        for (auto* at = static_cast<uint8_t*>(nullptr); VirtualQuery(at, &mbi, sizeof(mbi)) == sizeof(mbi);
+             at = static_cast<uint8_t*>(mbi.BaseAddress) + mbi.RegionSize)
+        {
+            if (mbi.State == MEM_FREE)
+            {
+                total += mbi.RegionSize;
+                largest = std::max(largest, static_cast<size_t>(mbi.RegionSize));
+            }
+            if (mbi.RegionSize == 0)
+            {
+                break;
+            }
+        }
+        LOG("AgentSave: free address space {} MB, the largest piece {} MB", total >> 20, largest >> 20);
+        if (largest < (24u << 20))
+        {
+            LOG("AgentSave: under 24 MB free in one piece: no save now, the game would crash building it");
+            g_saveWanted = false;
+            g_restartSave = false;
+            return;
+        }
+    }
     // The last save kept beside it first (a bad game is not carried on with nothing to go back to).
     const std::wstring backup = g_path.substr(0, g_path.size() - 4) + L".BAK";
     if (slotFileExists())
