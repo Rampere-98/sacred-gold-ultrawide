@@ -213,6 +213,9 @@ namespace
         int32_t x = 0, y = 0;
         int layer = -1;
     };
+    // Every storage chest seen (the world holds every town's at once: 29 at a load in A7, 2026-11-16), and the one
+    // gone to: the nearest on the hero's layer, chosen at each roam.
+    std::unordered_map<uint32_t, StorageSeen> g_storages;
     StorageSeen g_storage;
     std::atomic<int> g_destRegion{-1};
     std::atomic<bool> g_storageNear{false};
@@ -220,7 +223,7 @@ namespace
     void storageSeen(cObject* object)
     {
         static std::unordered_set<uint32_t> s_marked;
-        g_storage = {object->id, object->x, object->y, *(reinterpret_cast<const uint8_t*>(object) + 0x24)};
+        g_storages[object->id] = {object->id, object->x, object->y, *(reinterpret_cast<const uint8_t*>(object) + 0x24)};
         if (!s_marked.insert(object->id).second)
         {
             return;
@@ -5686,6 +5689,24 @@ namespace
         // click on it); Gear moves the pieces while its window is open and closes it. Not before the merchant.
         static DWORD s_storageFailedAt = 0, s_storageAskAt = 0, s_storageClickAt = 0;
         static int s_storageTries = 0;
+        {
+            double nearest = 0.0;
+            StorageSeen pick;
+            for (const auto& [id, st] : g_storages)
+            {
+                const double d = std::hypot(static_cast<double>(st.x - self->x), static_cast<double>(st.y - self->y));
+                if (st.layer == layer && (!pick.id || d < nearest))
+                {
+                    pick = st;
+                    nearest = d;
+                }
+            }
+            if (pick.id != g_storage.id)
+            {
+                s_storageTries = 0;
+            }
+            g_storage = pick;
+        }
         g_storageNear = g_storage.id && g_storage.layer == layer &&
                         (!s_storageFailedAt || now - s_storageFailedAt > 600000) &&
                         std::hypot(static_cast<double>(g_storage.x - self->x), static_cast<double>(g_storage.y - self->y)) <=
