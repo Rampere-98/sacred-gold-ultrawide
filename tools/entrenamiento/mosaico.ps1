@@ -343,6 +343,8 @@ public class Mosaico : Form
                     foreach (ManagementObject o in q.Get())
                     {
                         string cl = (o["CommandLine"] ?? "").ToString();
+                        // Another program's command naming these files (a shell of Claude's, a status query) is not them.
+                        if (cl.Contains("shell-snapshots") || cl.Contains("Win32_Process") || cl.Contains("Get-CimInstance")) continue;
                         if (cl.Contains("agentes.sh")) launcherUp = true;
                         if (cl.Contains("vigilante.ps1")) watcherUp = true;
                     }

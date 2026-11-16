@@ -3,6 +3,7 @@
 $strikes = @{}
 $reviving = @{}
 $staleMin = 20
+$launcherMissing = 0
 
 # The time of the last line in a copy's log that shows the agent getting on (the same patterns the mosaic's «PARADO»
 # badge uses); $null when the log cannot be read. Only the last 1.5 MB is looked at.
@@ -52,6 +53,18 @@ while ($true) {
         }
     }
     foreach ($id in @($strikes.Keys)) { if (-not $seen[$id]) { $strikes.Remove($id) } }
+    # The launcher gone (2026-11-15: it died at 15:44 and no copy played until the coordinator came back at 01:24):
+    # started again, after two looks a minute apart, so a launcher being restarted by hand is not doubled.
+    $launcher = Get-CimInstance Win32_Process -Filter "Name='bash.exe'" | Where-Object {
+        $_.CommandLine -like '*agentes.sh*' -and $_.CommandLine -notlike '*shell-snapshots*' }
+    if ($launcher) { $launcherMissing = 0 } else { $launcherMissing++ }
+    if ($launcherMissing -ge 2 -and -not (Test-Path (Join-Path $PSScriptRoot 'auto-revivir.off'))) {
+        Start-Process 'C:\Program Files\Git\bin\bash.exe' -ArgumentList "`"$PSScriptRoot\agentes.sh`" 8 4" -WindowStyle Hidden
+        $line = "{0:HH:mm:ss} no launcher running for 2 checks: agentes.sh started" -f (Get-Date)
+        Add-Content -Path (Join-Path $PSScriptRoot 'vigilante.log') -Value $line -Encoding utf8
+        $line
+        $launcherMissing = 0
+    }
     # Revive: a copy whose agent has made no progress for $staleMin minutes (the window answers, the log goes on, but
     # no fight, loot, quest, sale or level for that long: a dialog the Enter does not close, the game menu, a hang of
     # the agent's own; the coordinator restarted these by hand three times on 2026-11-15) is asked to save, then closed
