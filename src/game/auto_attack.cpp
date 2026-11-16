@@ -1845,7 +1845,7 @@ namespace
         {
             close += std::hypot(static_cast<double>(f.x - self->x), static_cast<double>(f.y - self->y)) < 8.0 * kTileSize;
         }
-        const bool hardOnFoot = close >= 3 && Config::tactics.arts && Tactics::artsBarredMounted() > 0;
+        const bool hardOnFoot = close >= 3 && Config::tactics.arts && Tactics::artsBarredMounted() > 0 && Mind::now().hardOnFoot;
         // Off for a hard fight: not back up until 20 s without one (the code reviewer: off with three near, up again
         // as soon as fewer than three, back and forth). An ordinary fight is still fought from the saddle.
         static DWORD s_hardAt = 0;

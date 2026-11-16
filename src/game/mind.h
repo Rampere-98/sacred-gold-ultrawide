@@ -42,6 +42,10 @@ namespace Mind
         // Two more for the classes that open with several (the dwarf's steel, battle rage and war cry, N1; the dark
         // elf's testosterone and adrenaline, D1; the daemon's infernal power and call of death, A1): 0 none.
         uint32_t openMore[2] = {};
+        // Off the horse for a hard fight (three or more near and arts in the slots barred up there). The player,
+        // 2026-11-16: the Seraphim, the battle mage and the dark elf fight better from the saddle, on foot only where
+        // a horse cannot go (caves, inside), casting what the saddle allows.
+        bool hardOnFoot = true;
     };
 
     inline const Values& of(HeroProfile::Class cls)
@@ -51,13 +55,13 @@ namespace Mind
         // Farming zones a level nearer the hero's (the live verifier, 2026-11-11: the Seraphim, level 2-3, sent to
         // zones of 4-7 three times and dead there three times).
         // Panic: Conversion 0x13 (S1: «to get a big one off you»); 0x10 was the battle mage's Circle of Fear, never hers.
-        static constexpr Values kSeraphim  {2,    1,   30,  60,  85,  0.5f,  6,   true,   0.0f, 35, 0x13, 6, 4, 0x15};
+        static constexpr Values kSeraphim  {2,    1,   30,  60,  85,  0.5f,  6,   true,   0.0f, 35, 0x13, 6, 4, 0x15, {}, false};
         static constexpr Values kGladiator {3,    2,   25,  60,  85,  0.5f,  8,   true,   0.0f, 35, 0x3F6, 9, 5, 0x3F7};
         // Panic: Water Form 0x4 first (M2: out of more trouble, unseen); Phase 0x1 «fails 60 %» (M1).
-        static constexpr Values kMage      {1,    0,   35,  70,  90,  0.6f,  5,   true,   0.0f, 40, 0x4, 4, 3, 0x1F};
+        static constexpr Values kMage      {1,    0,   35,  70,  90,  0.6f,  5,   true,   0.0f, 40, 0x4, 4, 3, 0x1F, {}, false};
         // Opens with Multiple Shot, then Penetrating Arrow (E1, E2: «the star pair»); panic Transformation (E1 B).
         static constexpr Values kWoodElf   {2,    1,   35,  70,  90,  0.6f,  6,   true,   0.0f, 40, 0x24, 5, 3, 0x3ED};
-        static constexpr Values kDarkElf   {2,    1,   30,  60,  85,  0.5f,  8,   true,   0.0f, 35, 0x413, 7, 4, 0x417, {0x418}};
+        static constexpr Values kDarkElf   {2,    1,   30,  60,  85,  0.5f,  8,   true,   0.0f, 35, 0x413, 7, 4, 0x417, {0x418}, false};
         static constexpr Values kVampiress {2,    1,   30,  65,  85,  0.5f,  8,   true,   0.0f, 35, 0x408, 7, 4};
         static constexpr Values kDwarf     {3,    2,   25,  55,  80,  0.5f,  8,   true,   0.0f, 30, 0x43B, 8, 5, 0x3B, {0x43A, 0x441}};
         // Panic: Abysmal Choir 0x42 (A1 C: slows those on her); Dread 0x43 was graded F (A1 «forget it»).
