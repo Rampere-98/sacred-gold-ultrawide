@@ -92,8 +92,9 @@ namespace MapMemory
     void setQuestMarks(std::vector<QuestMark> marks);
 
     // What the agent found, kept on its map with a symbol: a merchant (a shop opened there), a way into another layer
-    // (door, stairs, cave: both ends), a portal (a jump on the same layer: both ends).
-    enum class Mark : uint8_t { Merchant, Entrance, Portal, Count };
+    // (door, stairs, cave: both ends), a portal (a jump on the same layer: both ends), a town's storage chest (cChest3D
+    // TYPE_OBJECT_CHEST_STATIC 0x1450: every one opens the hero's same storage, Manolito block BH).
+    enum class Mark : uint8_t { Merchant, Entrance, Portal, Storage, Count };
     void mark(Mark kind, int layer, int32_t x, int32_t y);
     // The ways in or out and portal ends found on `layer` within `radius` tiles of tile (tx, ty), as tiles: the ways
     // out of a shut-in area (Whereabouts) the agent can try.

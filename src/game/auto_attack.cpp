@@ -200,6 +200,59 @@ namespace
     constexpr size_t kObjectFlags = 0x14;
     constexpr uint32_t kFixtureFlag = 0x1;
 
+    // A town's storage chest (TYPE_OBJECT_CHEST_STATIC): all of them open the hero's one storage, inventory entry 0x11
+    // ([0xAD4448] + 0x11 * 0x1180, the backpack's layout: cells of 12 bytes from +0x18, width +0x115C, height +0x115E;
+    // live 20x10, Manolito block BH). An item's base resistances: its info (item +0x118) s16 +0x32..+0x38 physical,
+    // fire, magic, poison. Read only: nothing is moved yet.
+    constexpr uint16_t kStorageChest = 0x1450;
+
+    void storageSeen(cObject* object)
+    {
+        static std::unordered_set<uint32_t> s_marked;
+        if (!s_marked.insert(object->id).second)
+        {
+            return;
+        }
+        const int layer = *(reinterpret_cast<const uint8_t*>(object) + 0x24);
+        const int tx = static_cast<int>(object->x / 53.66563), ty = static_cast<int>(object->y / 53.66563);  // kTileSize, defined further on
+        MapMemory::mark(MapMemory::Mark::Storage, layer, object->x, object->y);
+        const uint8_t* inv = *reinterpret_cast<uint8_t* const*>(0xAD4448);
+        const uint8_t* entry = inv ? inv + 0x11 * 0x1180 : nullptr;
+        const int w = entry ? *reinterpret_cast<const uint16_t*>(entry + 0x115C) : 0;
+        const int h = entry ? *reinterpret_cast<const uint16_t*>(entry + 0x115E) : 0;
+        if (w <= 0 || h <= 0 || w * h > 0x100)
+        {
+            LOG("AutoAttack: storage chest {:x} at tile {},{} (layer {}): never loot; its grid unread ({}x{})", object->id,
+                tx, ty, layer, w, h);
+            return;
+        }
+        cObjectManager* objects = cObjectManager::instance();
+        int items = 0, resisting = 0;
+        int sum[4] = {};
+        for (int i = 0; i < w * h; ++i)
+        {
+            const uint32_t id = *reinterpret_cast<const uint32_t*>(entry + 0x18 + 12 * i);
+            cObject* item = id && objects ? objects->object(id) : nullptr;
+            if (!item)
+            {
+                continue;
+            }
+            ++items;
+            const uint8_t* info = *reinterpret_cast<uint8_t* const*>(reinterpret_cast<const uint8_t*>(item) + 0x118);
+            bool any = false;
+            for (int k = 0; info && k < 4; ++k)
+            {
+                const int r = *reinterpret_cast<const int16_t*>(info + 0x32 + 2 * k);
+                sum[k] += r;
+                any = any || r > 0;
+            }
+            resisting += any ? 1 : 0;
+        }
+        LOG("AutoAttack: storage chest {:x} at tile {},{} (layer {}): never loot; the storage {}x{} holds {} items, {} with "
+            "resistances (physical {}, fire {}, magic {}, poison {})", object->id, tx, ty, layer, w, h, items, resisting,
+            sum[0], sum[1], sum[2], sum[3]);
+    }
+
     // What the object is: a cChest3D (its own class, by RTTI; it derives from cItemBase) is a container; anything
     // else the game ranks as a ground item is an item, whatever its class (gold included), but fixtures.
     Loot lootOf(cObject* object)
@@ -209,7 +262,15 @@ namespace
         const char* name = locator && locator->type ? locator->type->name : "?";
         const uint16_t category = object->vtable->pickCategory(object, nullptr, 1, 0);
         Loot loot = Loot::None;
-        if (std::strcmp(name, ".?AVcChest3D@@") == 0)
+        if (std::strcmp(name, ".?AVcChest3D@@") == 0 &&
+            *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(object) + 0x10) == kStorageChest)
+        {
+            // A town's storage chest: the hero's own store, never loot (the player, 2026-11-16: «lo abren mucho pero
+            // no lo usan para nada»; A5 went three times for «a chest not yet opened» d8, its town's storage). Kept on
+            // the map, and its contents told once.
+            storageSeen(object);
+        }
+        else if (std::strcmp(name, ".?AVcChest3D@@") == 0)
         {
             loot = Loot::Container;
         }
@@ -3881,7 +3942,7 @@ namespace
     DWORD g_chestSince = 0;            // since when the hero heads for this one
     uint32_t g_chestHeading = 0;
 
-    bool isChest(const uint8_t* o)
+    bool isChestClass(const uint8_t* o)
     {
         const uint32_t vtable = *reinterpret_cast<const uint32_t*>(o);
         if (g_chestVtable)
@@ -3895,6 +3956,21 @@ namespace
             return true;
         }
         return false;
+    }
+
+    // A chest to open: a cChest3D but a town's storage chest (the hero's own store, kept on the map instead).
+    bool isChest(const uint8_t* o)
+    {
+        if (!isChestClass(o))
+        {
+            return false;
+        }
+        if (*reinterpret_cast<const uint16_t*>(o + 0x10) == kStorageChest)
+        {
+            storageSeen(reinterpret_cast<cObject*>(const_cast<uint8_t*>(o)));
+            return false;
+        }
+        return true;
     }
     bool g_farmKnown = false;
     int32_t g_farmX = 0, g_farmY = 0;   // world: the chosen zone's middle (where its enemies gather)

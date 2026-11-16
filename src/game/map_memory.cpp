@@ -918,6 +918,12 @@ namespace
                 dl->AddTriangle(ImVec2(p.x - mark, p.y - mark * 0.8f), ImVec2(p.x + mark, p.y - mark * 0.8f),
                                 ImVec2(p.x, p.y + mark), IM_COL32(0, 0, 0, 255), 1.5f);
                 break;
+            case MapMemory::Mark::Storage:
+                dl->AddRectFilled(ImVec2(p.x - mark * 0.8f, p.y - mark * 0.6f), ImVec2(p.x + mark * 0.8f, p.y + mark * 0.6f),
+                                  IM_COL32(150, 95, 40, 255));
+                dl->AddRect(ImVec2(p.x - mark * 0.8f, p.y - mark * 0.6f), ImVec2(p.x + mark * 0.8f, p.y + mark * 0.6f),
+                            IM_COL32(255, 255, 255, 255), 0.0f, 0, 1.5f);
+                break;
             case MapMemory::Mark::Portal:
                 dl->AddCircle(p, mark, IM_COL32(200, 90, 255, 255), 0, 2.5f);
                 dl->AddCircleFilled(p, mark * 0.35f, IM_COL32(200, 90, 255, 255));
@@ -1331,7 +1337,7 @@ std::vector<std::pair<int, int>> MapMemory::waysOut(int layer, int tx, int ty, i
     const std::lock_guard lock(g_lock);
     for (const Landmark& l : g_landmarks)
     {
-        if (l.kind != MapMemory::Mark::Merchant && (!entrancesOnly || l.kind == MapMemory::Mark::Entrance) &&
+        if ((l.kind == MapMemory::Mark::Entrance || (!entrancesOnly && l.kind == MapMemory::Mark::Portal)) &&
             l.layer == (layer & 0xFF) && std::abs(l.tx - tx) <= radius &&
             std::abs(l.ty - ty) <= radius)
         {
