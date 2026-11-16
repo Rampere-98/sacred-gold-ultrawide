@@ -5431,6 +5431,7 @@ namespace
                 remember("activa un portal");
                 Portals::disarm();
                 g_portalTrip.onTileSince = 0;
+                g_portalTrip.goal = ~0ull;  // the goal weighed again with this portal
             }
             if (Portals::armedFrom() >= 0)
             {
@@ -5482,17 +5483,17 @@ namespace
                 tried |= 1u << id;
             }
         }
-        if (const int near = Portals::unjoinedNear(htx, hty, 30.0, tried); near >= 0)
+        if (const int nearId = Portals::unjoinedNear(htx, hty, 30.0, tried); nearId >= 0)
         {
-            Portals::tile(near, ftx, fty);
-            g_portalJoinTried[near] = now;
+            Portals::tile(nearId, ftx, fty);
+            g_portalJoinTried[nearId] = now;
             if (Act::allowed(Act::Kind::Portals, "step onto a portal nearby to join it"))
             {
                 LOG("AutoAttack: portal {} at {},{} ({:.0f} tiles) not joined yet (the hero's portals {:x}): stepping onto it",
-                    near, ftx, fty, std::hypot(htx - ftx, hty - fty), Portals::joined());
+                    nearId, ftx, fty, std::hypot(htx - ftx, hty - fty), Portals::joined());
                 g_portalTrip.since = now;
                 g_portalTrip.onTileSince = 0;
-                Portals::arm(near, -1);
+                Portals::arm(nearId, -1);
                 px = tileMiddle(ftx);
                 py = tileMiddle(fty);
                 return true;
@@ -5502,7 +5503,11 @@ namespace
         {
             return false;   // decided for this goal already: on foot
         }
-        g_portalTrip.goal = goal;
+        // Not from a shut-in place (a cave, a yard: layer 0 holds the caves too, far off the surface's ground).
+        if (Whereabouts::area().shutIn)
+        {
+            return false;
+        }
         Portals::Plan plan;
         const bool through = Portals::plan(htx, hty, gtx, gty, skip, plan);
         if (plan.walk < Portals::kMinWalkTiles)
@@ -5511,19 +5516,41 @@ namespace
         }
         if (!through)
         {
+            g_portalTrip.goal = goal;
             LOG("AutoAttack: to {},{}: on foot, {:.0f} tiles (through portals {:.0f}{}; the hero's portals {:x})", gtx, gty,
                 plan.walk, plan.through, plan.from >= 0 ? std::format(", {} -> {}", plan.from, plan.to) : "",
                 Portals::joined());
             return false;
         }
+        // Both walks over what the map knows (a goal inside a cave, or across the sea, has none): the routes'
+        // lengths for the as-the-crow-flies ones, worked out on their thread (on foot meanwhile; asked again).
+        int ttx, tty;
+        Portals::tile(plan.from, ftx, fty);
+        Portals::tile(plan.to, ttx, tty);
+        const float toPortal = MapMemory::routeTiles(0, htx, hty, ftx, fty);
+        const float fromPortal = MapMemory::routeTiles(0, ttx, tty, gtx, gty);
+        if (toPortal == -1.0f || fromPortal == -1.0f)
+        {
+            return false;
+        }
+        g_portalTrip.goal = goal;
+        const double routed = (toPortal >= 0.0f ? toPortal : 0.0) + Portals::kBoxTiles + (fromPortal >= 0.0f ? fromPortal : 0.0);
+        if (toPortal < 0.0f || fromPortal < 0.0f || routed > plan.walk * Portals::kShare ||
+            plan.walk - routed < Portals::kMinSavedTiles)
+        {
+            LOG("AutoAttack: to {},{}: on foot, {:.0f} tiles: portals {} -> {} routed {} + {} tiles", gtx, gty, plan.walk,
+                plan.from, plan.to, toPortal < 0.0f ? std::string("none") : std::format("{:.0f}", toPortal),
+                fromPortal < 0.0f ? std::string("none") : std::format("{:.0f}", fromPortal));
+            return false;
+        }
+        plan.through = routed;
         if (!Act::allowed(Act::Kind::Portals, "take a portal: shorter than the walk"))
         {
             g_portalTrip.goal = ~0ull;  // asked again on the next look (Suggest)
             return false;
         }
-        Portals::tile(plan.from, ftx, fty);
-        LOG("AutoAttack: to {},{}: through portals {} ({},{}) -> {}, {:.0f} tiles instead of {:.0f} on foot", gtx, gty,
-            plan.from, ftx, fty, plan.to, plan.through, plan.walk);
+        LOG("AutoAttack: to {},{}: through portals {} ({},{}) -> {}, {:.0f} tiles instead of {:.0f} on foot ({} hirelings)",
+            gtx, gty, plan.from, ftx, fty, plan.to, plan.through, plan.walk, g_hirelings.size());
         g_portalTrip.since = now;
         g_portalTrip.onTileSince = 0;
         Portals::arm(plan.from, plan.to);
