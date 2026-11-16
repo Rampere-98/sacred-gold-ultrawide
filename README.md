@@ -1,118 +1,74 @@
-# Sacred Gold ModKit
+# Sacred Gold en ultrawide (32:9)
 
-*English summary: a fork of [SacredBild](https://github.com/kirides/sacred-bild) (GPL-3). The `main` branch is the
-main body, SacredBild as it is; every `mod/*` branch adds one mod on top of it, and `modkit` merges them all. Each
-branch builds its own `ddraw.dll`.*
+*English summary: getting **Sacred Gold** (Steam, 2004) to run on a 5120x1440 (32:9) monitor: a `ddraw.dll` that renders the game wide (Direct3D 9, scaled UI), plus the reverse-engineering notes and a verified binary patcher from the first attempt. No game files are included.*
 
-El **cuerpo principal** es SacredBild tal cual (rama `main`): ultrawide, Direct3D 9, UI escalada, mando. Cada **mod**
-es una rama que parte de `main` y añade una sola cosa; la rama `modkit` los junta todos.
+## Resultado
 
-| Rama | Mod | Ajuste en `SacredBild.ini` |
-|---|---|---|
-| `main` | Cuerpo principal: SacredBild sin mods. | - |
-| [`mod/auto-attack`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/auto-attack) | Autoataque con ratón y teclado (F11): decide como un jugador: enemigos cerca, acercándose o hiriéndole antes que el botín (salvo lo que tiene a sus pies), si no lo más cercano; recoge objetos (oro incluido, nunca postes), abre cofres y ataca con las órdenes del propio juego, con tiempos de reacción naturales; además usa las artes de combate según para qué sirven (curas solo si falta vida, área solo con varios enemigos, golpes fuertes solo contra enemigos duros, mejoras al empezar una pelea dura; aprende qué hace cada una) y los consumibles (Mentor, Antídoto, Concentración, Muerte de no-muertos, curar mercenarios); el ratón queda libre para el inventario. | `[AutoAttack]` |
-| [`mod/auto-potion`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/auto-potion) | Pociones de curación automáticas: bebe (tecla Espacio del juego) cuando falta tanta vida como cura una poción, cantidad que aprende de las que bebe. | `[AutoPotion]` |
-| [`mod/smooth-walk`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/smooth-walk) | Sin tirones al andar en pantallas anchas: caché de capas del suelo de 0x40000 entradas. | - |
-| [`mod/wide-sectors`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/wide-sectors) | Sin esquinas negras: carga y dibuja 5x5 sectores alrededor de la cámara en vez de 3x3. | `[Render] WideSectors` |
-| [`mod/click-walk`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/click-walk) | Ruta automática: un clic lejano planifica la ruta (A*) sobre los sectores cargados y la recorre por tramos. Necesita `mod/wide-sectors` (parte de ella). | - |
-| [`modkit`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/modkit) | Todos los mods juntos. | todos |
+**Solución que funciona: el `ddraw.dll` de este repo** (GPL-3).
+Probado a 5120x1440 con el `Sacred.exe` original de Steam:
 
-**Instalar:** el juego carga un solo `ddraw.dll`, así que se instala una rama: la del mod que quieras o `modkit` para
-todos. El workflow del repo (Actions → *Build*, *Run workflow* sobre la rama) genera el `ddraw.dll`; se copia en la
-carpeta del juego con `SacredBild.ini` y `SacredBild\` como en SacredBild.
+- el mundo llena el 32:9 a su densidad de píxel original, con el personaje centrado;
+- la barra inferior centrada y los demás paneles de la HUD en los bordes;
+- menús y pantallas de carga escalados a la altura y centrados.
 
-**Menú del ModKit:** la tecla Inicio abre y cierra sobre el juego (también en los menús) los ajustes de cada mod
-instalado; los cambios se aplican al momento y *Guardar en SacredBild.ini* los conserva. Necesita `[DDraw] Backend=d3d9`.
+Instalación: compilar con el workflow del repo (Actions → *Build*) y copiar `ddraw.dll`, `SacredBild.ini` y `SacredBild\` en la carpeta del juego, y arrancar desde Steam como siempre. Antes del juego
+sale su ventana de ajustes (resolución = escritorio por defecto). Es incompatible con dgVoodoo2: los dos son
+`ddraw.dll`.
 
-**Añadir un mod:** rama `mod/<nombre>` desde `main`, un módulo en `src/game/` con su sección en el ini y en el menú (`ModkitMenu::add`), y después
-merge en `modkit`. Notas de ingeniería inversa y herramientas: [sacred-gold-ultrawide](https://github.com/Rampere-98/sacred-gold-ultrawide).
+Alternativas probadas o valoradas:
 
----
+| Opción | Estado |
+|---|---|
+| dgVoodoo2 solo | Escala el 4:3 con bandas negras; no amplía la vista. |
+| Parche binario (`notas/patcher`) | Amplía modo de vídeo y renderizador del mapa; el personaje y la HUD quedan mal. |
+| [PureHD](https://www.pcgamingwiki.com/wiki/Sacred#High-resolution_rendering) 1.40 | Panorámico "hasta 1080p"; instalado pero sustituido por este motor sin probarlo en partida. |
+| El `ddraw.dll` de este repo | **Funciona.** |
 
-## SacredBild (cuerpo principal)
+Detalles técnicos del motor: [MOTOR.md](MOTOR.md).
 
-> **AI disclosure:** SacredBild is developed with an AI coding assistant (Anthropic's Claude). Most of the code,
-> the reverse engineering notes and this documentation were written with it, at the maintainer's direction; the
-> maintainer decides what goes in and tests the changes in the game. The source is kept to what the features need
-> and documented so that people can review it: see [Development](docs/Development.md).
+## Qué hay aquí
 
-A `ddraw.dll` hook for **Sacred Gold** that runs the game at modern resolutions and instruments its
-renderer, as groundwork for replacing the slow parts. It runs the game's DirectDraw / Direct3D 7 on Direct3D 9Ex
-itself (or loads [DDrawCompat](https://github.com/narzoul/DDrawCompat) behind itself, `Backend=chain`), and patches
-the game's internals (the approach of [GD3D11](https://github.com/kirides/GD3D11) for Gothic).
+| Ruta | Contenido |
+|---|---|
+| [`notas/hallazgos.md`](notas/hallazgos.md) | Direcciones y funciones encontradas con REA/Ghidra, y por qué el parche propio no basta. |
+| [`notas/patcher/patch_sacred.py`](notas/patcher/patch_sacred.py) | Parcheador verificable: comprueba cada byte original antes de escribir. |
+| [`notas/tools/rea_bridge/`](notas/tools/rea_bridge) | Puente TCP a una sesión persistente de REA (`rea-agents --mcp`) para no reanalizar en cada consulta. |
+| [`notas/tools/scan_constants.py`](notas/tools/scan_constants.py) | Busca 1024/768 como inmediatos y floats en un PE. |
+| [`notas/tools/relative_mouse.py`](notas/tools/relative_mouse.py) | Envía movimiento relativo de ratón (SendInput) para juegos con DirectInput. |
 
-Supported executables: the **English** GOG `Sacred.exe` (PE timestamp `0x452F85C7`) and the **German**
-`sacred.exe` 2.0 (`0x451BBE74`), with their `gameserver.exe`. SacredBild finds what it patches by byte signatures, not
-fixed addresses, so other builds with the same code should work too; if a signature isn't found, it only passes
-ddraw calls through and logs which one.
+## Flujo de ingeniería inversa
 
-## What it does
+1. **Quitar el DRM.** El `Sacred.exe` de Steam lleva SteamStub v2 (sección `.bind`, `.text` cifrado). Se
+   desempaqueta con [Steamless](https://github.com/atom0s/Steamless) (`Steamless.CLI.exe Sacred.exe`).
+2. **Analizar con REA + Ghidra 12.1 (JDK 21).** Por CLI, REA vuelve a analizar en cada llamada (unos 9 min con este
+   exe). La solución es una sesión `--mcp` persistente detrás de [`notas/tools/rea_bridge/bridge.py`](notas/tools/rea_bridge/bridge.py), con:
+   - `REA_GHIDRA_STARTUP_TIMEOUT_MS=7200000`: el valor por defecto de 330 s no basta;
+   - `REA_GHIDRA_DISABLED_ANALYZERS="Decompiler Parameter ID"`: ese analizador es el que se come el tiempo.
+3. **Parchear y probar.** El parcheador trabaja sobre el exe desempaquetado y se niega a escribir si algún byte
+   esperado no coincide.
 
-- **Any resolution and a scalable UI**: the world shows more at its original pixel density, the 1024x768 UI is
-  scaled into a centered canvas, and the HUD windows sit at the screen edges. Also: input only while the game is in
-  the foreground, the cursor kept in the window, drawing in the background, a frame limiter that doesn't spin, and
-  full-screen screenshots. See [Display, UI and input](docs/Display.md).
-- **Faster rendering**: DirectDraw / Direct3D 7 on SacredBild's own Direct3D 9Ex backend, the world's draw calls
-  merged, the ground kept on the GPU, characters skinned on the GPU and animated on several threads, movies through Media Foundation, frame statistics, a profiler and crash
-  dumps. See [Rendering](docs/Rendering.md).
-- **Controller** (Xbox, PlayStation, Switch; through SDL3): walking with the stick, aim-assisted attacks and combat
-  arts, a cursor and D-pad navigation for menus and windows, button prompts on screen, bindings set in game. See
-  [Controller](docs/Controller.md).
-- **Multiplayer**: LAN games over VPNs, the game connection over UDP instead of TCP, and a matchmaker that lists
-  everyone's games in the LAN list and connects players without port forwarding (IPv4 and IPv6). See
-  [Multiplayer](docs/Multiplayer.md).
-- **Languages**: one install runs every language you have the text and speech files for. See
-  [Languages](docs/Languages.md).
-
-## Install
-
-From a [release](../../releases) (tagged versions, and a nightly prerelease of every push to `main`): extract the
-zip into the game folder. It replaces the `ddraw.dll` there (if that is DDrawCompat, move it to
-`SacredBild\DDrawCompat.dll` first) and an existing `SacredBild.ini`.
-
-The Steam version works the same way: its `Sacred.exe` is the English GOG exe inside Steam's DRM wrapper
-(SteamStub), and SacredBild starts once the wrapper has decoded the game's code.
-
-From a build (see [Build](docs/Development.md#build)):
-
-```powershell
-.\install.ps1 -GameDir "B:\Spiele\GOG Games\Sacred Gold"
+```bash
+# Python 3, sin dependencias
+python notas/patcher/patch_sacred.py Sacred.unpacked.exe Sacred.exe 2730 768
 ```
 
-This backs up the current `ddraw.dll`, moves an existing DDrawCompat to `SacredBild\DDrawCompat.dll`,
-copies SacredBild's `ddraw.dll` and creates `SacredBild.ini` if there is none. `uninstall.ps1` restores the backup.
-DDrawCompat is only used with `[DDraw] Backend=chain`; without it, that falls back to Windows' own `ddraw.dll`
-(whose Direct3D 7 runtime refuses render targets over 2048 pixels; SacredBild works around that).
+Requiere dgVoodoo2 con `ExtraEnumeratedResolutions = 2730x768` para que el modo exista. Con eso el mapa llena el
+ancho, pero el personaje no aparece y la HUD sigue a la izquierda: ver [hallazgos](notas/hallazgos.md#por-qué-no-basta).
 
-The Direct3D 9 backend runs on any `d3d9.dll`: `[DDraw] D3D9`, else a `d3d9.dll` next to the game exe (e.g.
-[DXVK](https://github.com/doitsujin/dxvk)'s 32-bit one), else Windows' own. `SacredBild.log` names the one in use
-(`Direct3D 9: using ...`). Under Wine / Proton, SacredBild's `ddraw.dll` only loads with a native override:
-`WINEDLLOVERRIDES="ddraw=n,b"`.
+```bash
+# Puente REA (Windows; requiere Node.js, Ghidra 12.1 y un JDK 21)
+set GHIDRA_INSTALL_DIR=C:\ruta\ghidra_12.1.4_PUBLIC
+set JAVA_HOME=C:\ruta\jdk-21
+python -I -u notas/tools/rea_bridge/bridge.py
+python notas/tools/rea_bridge/call.py open_binary "{\"path\": \"C:/ruta/Sacred.unpacked.exe\"}"
+python notas/tools/rea_bridge/call.py procedure_pseudo_code "{\"procedure\": \"0x645260\"}"
+```
 
-## Documentation
+## Avisos
 
-| Document | Contents |
-|---|---|
-| [Configuration](docs/Configuration.md) | The settings window and every key of `SacredBild.ini` |
-| [Display, UI and input](docs/Display.md) | Resolution, UI canvas and HUD layout, screenshots, focus and cursor handling, frame limits |
-| [Rendering](docs/Rendering.md) | The Direct3D 9Ex backend, movies, batching, GPU skinning, diagnostics |
-| [Controller](docs/Controller.md) | Button layout, menus and windows, button prompts, controller settings |
-| [Multiplayer](docs/Multiplayer.md) | LAN games over VPNs, the UDP connection, online games through the matchmaker |
-| [Languages](docs/Languages.md) | Text and speech of other languages, `import-language.ps1` |
-| [Development](docs/Development.md) | Reading the code, source files, tools, build |
-| [RE notes](docs/RE_NOTES.md) | What the game's code does, as far as SacredBild needs it |
-| [UDP protocol](docs/UDP_PROTOCOL.md) | The UDP connection's and the matchmaker's wire formats |
-| [Matchmaker](matchmaker/README.md) | Running a matchmaking server |
+- No se incluye ningún fichero del juego ni de terceros (exe, DLL, `Settings.cfg`): necesitas tu copia legal.
+- Las direcciones son del `Sacred.exe` de Steam con md5 `007580390e5c177a9144bfb66c02d6fe`, una vez desempaquetado.
+- Herramientas usadas: [REA](https://www.npmjs.com/package/rea-agents) 6.7.0, Ghidra 12.1.4, Steamless,
+  dgVoodoo2 2.87.6.
 
-## Credits
-
-SacredBild builds on:
-
-- [Detours](https://github.com/microsoft/Detours) (hooks), [gtl](https://github.com/greg7mdp/gtl) (hash maps),
-  [Dear ImGui](https://github.com/ocornut/imgui) (SacredBild's own screens), [SDL3](https://www.libsdl.org)
-  (controllers) and [KCP](https://github.com/skywind3000/kcp) (the UDP connection), linked in;
-- [Input Prompts](https://github.com/meritite-union/input-prompts) by the Meritite Union (CC0): the controller
-  button images of the button prompts;
-- [DDrawCompat](https://github.com/narzoul/DDrawCompat) and [DXVK](https://github.com/doitsujin/dxvk), which it can
-  load (`[DDraw] Backend=chain`, `[DDraw] D3D9`);
-- the approach of [GD3D11](https://github.com/kirides/GD3D11) for Gothic.
+Licencia: el motor, GPLv3 (ver [LICENSE](LICENSE) y [NOTICE](NOTICE)); los scripts y notas de `notas/`, MIT.
