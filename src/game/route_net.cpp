@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -44,9 +45,12 @@ namespace
         bool ok = false;
         std::vector<std::pair<int, int>> points;  // the hero's start .. the goal
         size_t progress = 0;                      // the point nearest the hero last asked
+        int tiles = 0;                            // the walk's length by the net
     };
     Kept g_kept;
     bool g_busy = false;
+    // Lengths asked for (walkTiles: the portals' choice of walking or jumping), kept apart from the trip walked.
+    std::deque<Kept> g_lengths;
 
     constexpr int kReach = 120;     // nodes this near an end (tiles, the larger axis) are tried for it
     constexpr int kTry = 8, kKeep = 4;
@@ -348,6 +352,7 @@ namespace
             k.points.push_back({toX, toY});
         }
         k.ok = true;
+        k.tiles = best / 10;
         k.at = GetTickCount();
         LOG("RouteNet: trip {},{} to {},{} on layer {}: {} tiles by the net ({} as the crow flies), {} nodes{}{}, {} points, "
             "worked out in {} ms", fromX, fromY, toX, toY, layer, best / 10, cheb(fromX, fromY, toX, toY), chain.size(),
@@ -419,4 +424,47 @@ RouteNet::Trip RouteNet::trip(int layer, int fromX, int fromY, int toX, int toY,
         }).detach();
     }
     return Trip::Working;
+}
+
+float RouteNet::walkTiles(int fromX, int fromY, int toX, int toY)
+{
+    const std::lock_guard lock(g_lock);
+    if (g_loaded && g_nodes.empty())
+    {
+        return -2.0f;
+    }
+    const DWORD now = GetTickCount();
+    const auto same = [&](const Kept& k) {
+        return k.layer == 0 && std::abs(k.toX - toX) <= 4 && std::abs(k.toY - toY) <= 4 && cheb(k.fromX, k.fromY, fromX, fromY) <= 12;
+    };
+    for (const Kept& k : g_lengths)
+    {
+        if (same(k) && now - k.at < 300000)
+        {
+            return k.ok ? static_cast<float>(k.tiles) : -2.0f;
+        }
+    }
+    // The trip walked now may be the one asked for.
+    if (g_kept.ok && same(g_kept) && now - g_kept.at < 300000)
+    {
+        return static_cast<float>(g_kept.tiles);
+    }
+    if (!g_busy)
+    {
+        g_busy = true;
+        std::thread([=] {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+            Kept r = work(0, fromX, fromY, toX, toY);
+            r.points.clear();   // only its length is kept
+            r.points.shrink_to_fit();
+            const std::lock_guard done(g_lock);
+            g_lengths.push_front(std::move(r));
+            if (g_lengths.size() > 24)
+            {
+                g_lengths.pop_back();
+            }
+            g_busy = false;
+        }).detach();
+    }
+    return -1.0f;
 }

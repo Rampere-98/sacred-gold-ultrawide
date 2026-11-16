@@ -75,6 +75,24 @@ namespace
         int16_t tx, ty;
     };
     std::vector<Landmark> g_landmarks;
+    // What the other copies found (steamapps\common\SacredBild-hitos.txt, tools/red_rutas.py comun): ways in and out,
+    // jumps, merchants, storage, shown and used as this copy's own but never written to its map file. Those it has
+    // too (same kind within 4 squares) are left out.
+    std::vector<Landmark> g_sharedLandmarks;
+
+    // Each landmark, this copy's and the others'. Under g_lock.
+    template <typename Fn>
+    void forEachLandmark(Fn fn)
+    {
+        for (const Landmark& l : g_landmarks)
+        {
+            fn(l);
+        }
+        for (const Landmark& l : g_sharedLandmarks)
+        {
+            fn(l);
+        }
+    }
 
     // The encyclopedia on the map: where each enemy kind was met (12 bytes a place; at most kSightingsPerKind places
     // a kind, kSightings in all, the oldest dropped).
@@ -269,6 +287,49 @@ namespace
             g_shared.size(), g_shared.size() * sizeof(SharedChunk) / 1024, GetTickCount() - t0);
     }
 
+    // Under g_lock, after the copy's own landmarks are read.
+    void loadSharedLandmarks()
+    {
+        FILE* f = _wfopen(sharedPath(L"SacredBild-hitos.txt").c_str(), L"r");
+        if (!f)
+        {
+            LOG("MapMemory: no shared landmarks beside the copies (SacredBild-hitos.txt)");
+            return;
+        }
+        char line[96];
+        size_t read = 0, own = 0;
+        size_t byKind[static_cast<size_t>(MapMemory::Mark::Count)] = {};
+        while (std::fgets(line, sizeof(line), f))
+        {
+            int kind = 0, layer = 0, tx = 0, ty = 0;
+            if (std::sscanf(line, "L %d %d %d %d", &kind, &layer, &tx, &ty) != 4 || kind < 0 ||
+                kind >= static_cast<int>(MapMemory::Mark::Count) || layer < 0 || layer > 255)
+            {
+                continue;
+            }
+            ++read;
+            const Landmark l{static_cast<MapMemory::Mark>(kind), static_cast<uint8_t>(layer), static_cast<int16_t>(tx),
+                             static_cast<int16_t>(ty)};
+            const auto same = [&](const Landmark& o) {
+                return o.kind == l.kind && o.layer == l.layer && std::abs(o.tx - l.tx) <= 4 && std::abs(o.ty - l.ty) <= 4;
+            };
+            if (std::any_of(g_landmarks.begin(), g_landmarks.end(), same))
+            {
+                ++own;
+                continue;
+            }
+            if (std::any_of(g_sharedLandmarks.begin(), g_sharedLandmarks.end(), same))
+            {
+                continue;
+            }
+            g_sharedLandmarks.push_back(l);
+            ++byKind[kind];
+        }
+        std::fclose(f);
+        LOG("MapMemory: shared landmarks: {} read, {} this copy has, {} added (merchants {}, ways in or out {}, jumps {}, "
+            "storage {})", read, own, g_sharedLandmarks.size(), byKind[0], byKind[1], byKind[2], byKind[3]);
+    }
+
     // Up to `max` whitespace separated integers (decimal, or hex for the one at `hexAt`); how many were read.
     int numbers(const char* p, long* out, int max, int hexAt = -1)
     {
@@ -384,6 +445,7 @@ namespace
         g_dirty = false;
         LOG("MapMemory: {} map squares known in {} chunks ({} KB), {} landmarks", g_known, g_chunks.size(),
             g_chunks.size() * sizeof(Chunk) / 1024, g_landmarks.size());
+        loadSharedLandmarks();
     }
 
     void ensureLoaded()
@@ -956,16 +1018,15 @@ namespace
                 dl->AddLine(ImVec2(p.x - arm, p.y + arm), ImVec2(p.x + arm, p.y - arm), it->second, 2.0f);
             }
         }
-        for (const Landmark& l : g_landmarks)
-        {
+        forEachLandmark([&](const Landmark& l) {
             if (l.layer != (g_heroLayer & 0xFF) || std::abs(l.tx - g_heroTx) > half + 2 || std::abs(l.ty - g_heroTy) > half + 2)
             {
-                continue;
+                return;
             }
             const ImVec2 p = project(l.tx + 0.5, l.ty + 0.5);
             if (!inside(p, mark))
             {
-                continue;
+                return;
             }
             switch (l.kind)
             {
@@ -994,7 +1055,7 @@ namespace
             default:
                 break;
             }
-        }
+        });
         // Loot under the creatures: an item a small light blue square, a chest a brown box with a gold rim, a hiding
         // place (or well, gold) a pink plus.
         for (const BlipAt& b : g_blips)
@@ -1198,9 +1259,10 @@ namespace
         ImGui::Text("Capa %d: %d casillas pisadas (%d en total, %u KB). Casilla del héroe: %d, %d.", g_heroLayer,
                     seenOnLayer(), g_known, static_cast<unsigned>(g_chunks.size() * sizeof(Chunk) / 1024), g_heroTx,
                     g_heroTy);
-        ImGui::TextDisabled("Hallazgos: %d. Rombo dorado: mercader. Triángulo cian: entrada o salida. Anillo violeta: "
+        ImGui::TextDisabled("Hallazgos: %d propios y %d de las otras copias. Rombo dorado: mercader. Triángulo cian: entrada o salida. Anillo violeta: "
                             "portal. Radar: cuadradito azul, objeto en el suelo; caja marrón, cofre; cruz rosa, escondite "
-                            "mágico, pozo u oro.", static_cast<int>(g_landmarks.size()));
+                            "mágico, pozo u oro.", static_cast<int>(g_landmarks.size()),
+                            static_cast<int>(g_sharedLandmarks.size()));
         if (!g_landmarks.empty() && ImGui::SmallButton("Olvidar hallazgos"))
         {
             g_landmarks.clear();
@@ -1399,15 +1461,14 @@ std::vector<std::pair<int, int>> MapMemory::waysOut(int layer, int tx, int ty, i
 {
     std::vector<std::pair<int, int>> out;
     const std::lock_guard lock(g_lock);
-    for (const Landmark& l : g_landmarks)
-    {
+    forEachLandmark([&](const Landmark& l) {
         if ((l.kind == MapMemory::Mark::Entrance || (!entrancesOnly && l.kind == MapMemory::Mark::Portal)) &&
             l.layer == (layer & 0xFF) && std::abs(l.tx - tx) <= radius &&
             std::abs(l.ty - ty) <= radius)
         {
             out.emplace_back(l.tx, l.ty);
         }
-    }
+    });
     return out;
 }
 
@@ -1415,14 +1476,13 @@ std::vector<std::pair<int, int>> MapMemory::merchantsNear(int layer, int tx, int
 {
     std::vector<std::pair<int, int>> out;
     const std::lock_guard lock(g_lock);
-    for (const Landmark& l : g_landmarks)
-    {
+    forEachLandmark([&](const Landmark& l) {
         if (l.kind == MapMemory::Mark::Merchant && l.layer == (layer & 0xFF) && std::abs(l.tx - tx) <= radius &&
             std::abs(l.ty - ty) <= radius)
         {
             out.emplace_back(l.tx, l.ty);
         }
-    }
+    });
     return out;
 }
 

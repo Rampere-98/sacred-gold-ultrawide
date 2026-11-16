@@ -27,7 +27,9 @@ MAGIC = b"SBMC"
 VERSION = 1
 
 # Landmark kinds (MapMemory::Mark).
-MARK_NAMES = {0: "mercader", 1: "entrada", 2: "portal", 3: "almacen"}
+# Mark::Portal is a jump the hero was seen to make on one layer (mostly a cave's ends), not one of the game's portals:
+# those are the 13 of Portales.tsv (the portals session, 2026-11-16).
+MARK_NAMES = {0: "mercader", 1: "entrada", 2: "salto", 3: "almacen"}
 
 
 def kind_walkable(kind):
@@ -295,6 +297,13 @@ def cmd_red(a):
     if a.servicios:
         for r in read_tsv(a.servicios):
             raw.append((r["servicio"] + ":" + r["nombre_o_posicion"], "servicio", int(r["x"]), int(r["y"])))
+    if a.portales:
+        # The game's surface portals (ids 0..12, Manolito block BM): where the hero lands, by the table.
+        for r in read_tsv(a.portales):
+            pid = int(r["id"])
+            x, y = (int(v) for v in r["llegada_tabla"].strip("()").split(","))
+            if pid <= 12:
+                raw.append((f"portal{pid}:{r['zona_guion']}", "portal", x, y))
     if a.hitos:
         with open(a.hitos) as f:
             for line in f:
@@ -363,7 +372,8 @@ def cmd_red(a):
     out = os.path.join(a.salida, "SacredBild-red.txt")
     tmp = out + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        f.write("# SacredBild route net (tools/red_rutas.py red): N id layer x y kind name; W a b cost x,y x,y ...\n")
+        f.write("# SacredBild route net (tools/red_rutas.py red): N id layer x y kind name; W a b cost x,y x,y ...\n"
+                "# kind portal: the game's portal (name portal<id>:zone); salto: a jump seen on one layer\n")
         for i, (name, kind, x, y) in enumerate(nodes):
             f.write(f"N {i} 0 {x} {y} {kind} {name.replace(' ', '_')}\n")
         for (i, j), (c, pts) in sorted(edges.items()):
@@ -538,6 +548,7 @@ def main():
     r.add_argument("--pueblos")
     r.add_argument("--servicios")
     r.add_argument("--hitos")
+    r.add_argument("--portales", help="docs/Sacred/Portales.tsv: the game's portals")
     r.add_argument("--paso", type=int, default=48, help="tiles between way points")
     r.add_argument("--radio", type=int, default=110, help="how far a way from a node reaches, tiles")
     r.add_argument("--vecinos", type=int, default=8)

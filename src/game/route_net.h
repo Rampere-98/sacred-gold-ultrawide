@@ -17,4 +17,8 @@ namespace RouteNet
         Ready,      // `out` holds the tiles to walk, from about the hero to the goal, a point every few tiles
     };
     Trip trip(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out);
+    // The walk's length in tiles by the net on the surface (layer 0) from tile (fromX, fromY) to (toX, toY), for
+    // choosing between walking and a portal: -1 while it is worked out (on the same low thread; ask again), -2 with no
+    // net or no way by it. Kept five minutes for ends within 4 tiles (the goal) and 12 (the start).
+    float walkTiles(int fromX, int fromY, int toX, int toY);
 }
