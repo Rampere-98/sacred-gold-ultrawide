@@ -74,6 +74,8 @@ namespace Gear
     void storageUsed(uint32_t id);
     // The agent's visit to the storage under way (its window open or about to): the inventory left open meanwhile.
     bool storageOpen();
+    // A storage chest clicked whose window has not opened yet (and the visit not over): the trip still to be held.
+    bool storagePending();
     // Weapon slot `slot`'s weapons, for the arts that need a kind of weapon: bit 0 read, bit 1 a ranged weapon in it,
     // bit 2 a two-handed one, bit 3 any weapon. 0: not known yet (the weapon slots not ready).
     int slotWeapons(int slot);

@@ -3352,6 +3352,7 @@ namespace
     std::unordered_set<uint32_t> g_visitIn, g_visitOut;
     std::atomic<DWORD> g_storageAt{0};          // when it was used, then when the work in it was done
     std::atomic<bool> g_storageDone{false};     // the work done: closing
+    std::atomic<bool> g_storageShown{false};    // the chest's window seen open this visit
     DWORD g_storageVisitAt = 0;                 // the last visit (none wanted again for 10 min but for a new piece)
     size_t g_storageKeptBefore = 0;
     int g_storageCloseTries = 0;
@@ -3533,6 +3534,7 @@ namespace
                     marked ? "; the chest still marked in use (0x4000)" : "");
                 g_storageId = 0;
                 g_storageDone = false;
+                g_storageShown = false;
                 g_storageVisitAt = now;
                 g_wantStore = false;
                 g_wantTake = false;
@@ -3540,6 +3542,7 @@ namespace
             }
             return false;
         }
+        g_storageShown = true;
         cObjectManager* objects = cObjectManager::instance();
         void* inv = inventory();
         const uint32_t heroIdx = hero->id & 0xFFFF;
@@ -4309,6 +4312,7 @@ void Gear::storageUsed(uint32_t id)
     if (g_storageId.load() != id)
     {
         g_storageDone = false;
+        g_storageShown = false;
         g_visitIn.clear();
         g_visitOut.clear();
     }
@@ -4319,6 +4323,11 @@ void Gear::storageUsed(uint32_t id)
 bool Gear::storageOpen()
 {
     return g_storageId.load() != 0;
+}
+
+bool Gear::storagePending()
+{
+    return g_storageId.load() != 0 && !g_storageShown.load() && !g_storageDone.load();
 }
 
 int Gear::slotWeapons(int slot)

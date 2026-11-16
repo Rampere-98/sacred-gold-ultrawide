@@ -5711,7 +5711,10 @@ namespace
                         (!s_storageFailedAt || now - s_storageFailedAt > 600000) &&
                         std::hypot(static_cast<double>(g_storage.x - self->x), static_cast<double>(g_storage.y - self->y)) <=
                             40.0 * kTileSize;
-        if (Gear::wantsStorage() && !Gear::storageOpen() && !Gear::wantsShop() && g_storage.id && g_storage.layer == layer &&
+        // Held from the click until the chest's window opens (A5, 2026-11-16: the quest took the hero away the next
+        // tick, «its window never opened»); Gear gives the visit up after 20 s.
+        if ((Gear::wantsStorage() || Gear::storagePending()) && (!Gear::storageOpen() || Gear::storagePending()) &&
+            !Gear::wantsShop() && g_storage.id && g_storage.layer == layer &&
             Act::may(Act::Kind::Storage) && (!s_storageFailedAt || now - s_storageFailedAt > 600000))
         {
             const double d = std::hypot(static_cast<double>(g_storage.x - self->x), static_cast<double>(g_storage.y - self->y));
