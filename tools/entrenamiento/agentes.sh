@@ -18,6 +18,8 @@ setup() {    # $1 = index
   # A1 runs the release only (the player, 2026-11-14: the build in his own folder); the others are the guinea pigs
   # and keep the build the coordinator installed in them (canary.sh), getting the release only if they have none.
   if [ "$i" = 1 ] || [ ! -f "$D/ddraw.dll" ]; then cp -p "$G/Sacred Gold/ddraw.dll" "$D/ddraw.dll" 2>/dev/null; fi
+  # A1 is a replica of the player's folder (the player, 2026-11-16): his ini too, with only the copy's own keys on top.
+  if [ "$i" = 1 ]; then cp "$G/Sacred Gold/SacredBild.ini" "$D/SacredBild.ini" 2>/dev/null; fi
   echo -n 12320 > "$D/steam_appid.txt"
   python -I "$S/instance_ini.py" "$D/SacredBild.ini" "$i" "$W" "$H"
 }

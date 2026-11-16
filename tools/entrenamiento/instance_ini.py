@@ -41,5 +41,9 @@ put('AutoStart', 'Rotate', '0')
 put('AutoStart', 'NextClass', str(index - 1))
 # The agent's own routes on every copy (the A/B 19:40-22:46: a tie in experience, 22 % fewer stucks without A3/A5).
 put('AutoAttack', 'OwnPaths', '1')
+# The agent on and saving in its own slot (A1 starts from the player's ini, where these are off).
+put('AutoAttack', 'Enabled', '1')
+put('AutoAttack', 'HumanCursor', '1')
+put('AgentSave', 'Enabled', '1')
 put('Mind', 'Path', rf'C:\Users\silas\projects\sacred-bild\docs\Agente\Mente-a{index}.md')
 open(path, 'w', encoding='utf-8').write(text)
