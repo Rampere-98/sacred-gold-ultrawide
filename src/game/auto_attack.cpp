@@ -5380,6 +5380,7 @@ namespace
         DWORD since = 0;            // armed at
         DWORD onTileSince = 0;      // on the portal's tile since (0: not)
         DWORD farAt = 0;            // the hero last more than 60 tiles from the portal (the 10 min count from there)
+        DWORD offWaySince = 0;      // a portal to join out of the way of the goals travelled to since (0: on the way)
     };
     PortalTrip g_portalTrip;
     std::unordered_map<int, DWORD> g_portalLeftUntil;   // portal id -> not used again before this tick
@@ -5433,6 +5434,13 @@ namespace
         return static_cast<int32_t>((t + 0.5) * kTileSize);
     }
 
+    // A walk's length on the surface by the route net, else over what the map knows: -1 while worked out, -2 none.
+    float walkTilesBetween(int ax, int ay, int bx, int by)
+    {
+        const float net = RouteNet::walkTiles(ax, ay, bx, by);
+        return net == -2.0f ? MapMemory::routeTiles(0, ax, ay, bx, by) : net;
+    }
+
     // The tile to walk to instead of the goal while a portal is on the way: true with it in (px, py) (world).
     bool portalLeg(DWORD now, const cCreature* self, int32_t x, int32_t y, int32_t& px, int32_t& py)
     {
@@ -5476,15 +5484,24 @@ namespace
             }
             else if (const double more = std::hypot(htx - ftx, hty - fty) + std::hypot(ftx - gtx, fty - gty) -
                                          std::hypot(htx - gtx, hty - gty);
-                     more > 90.0)
+                     more <= 90.0)
             {
-                // The goal changed and the portal is no longer on the way: left for another time (tried again).
+                g_portalTrip.offWaySince = 0;
+            }
+            else if (!g_portalTrip.offWaySince)
+            {
+                g_portalTrip.offWaySince = now;     // another errand's goal for a moment (A3: two goals in turn each look)
+            }
+            else if (now - g_portalTrip.offWaySince > 15000)
+            {
+                // The goal changed for good and the portal is no longer on the way: left for another time (tried again).
                 LOG("AutoAttack: portal {}: not joined, {:.0f} tiles out of the way to the goal now at {},{}", from, more,
                     gtx, gty);
                 if (g_portalJoinTries[from])
                 {
                     --g_portalJoinTries[from];
                 }
+                g_portalLeftUntil[from] = now + 300000;     // not straight back to it (5 min; no try counted)
                 Portals::disarm();
                 g_portalTrip.onTileSince = 0;
             }
@@ -5554,7 +5571,10 @@ namespace
             joinId >= 0)
         {
             Portals::tile(joinId, ftx, fty);
-            if (Act::allowed(Act::Kind::Portals, "go out of the way to a portal to join it"))
+            // Only with a walk there (A7, 2026-11-16: in a cave whose floor lies at 4890,4315 on layer 0, portal 6 looked
+            // «6 tiles out of the way» as the crow flies; armed, dropped on the way out, armed again at each way in).
+            if (walkTilesBetween(htx, hty, ftx, fty) >= 0.0f &&
+                Act::allowed(Act::Kind::Portals, "go out of the way to a portal to join it"))
             {
                 ++g_portalJoinTries[joinId];
                 LOG("AutoAttack: portal {} at {},{} ({:.0f} tiles, {:.0f} more on the way to {},{}) not joined yet (the "
@@ -5564,6 +5584,7 @@ namespace
                 g_portalTrip.since = now;
                 g_portalTrip.onTileSince = 0;
                 g_portalTrip.farAt = 0;
+                g_portalTrip.offWaySince = 0;
                 Portals::arm(joinId, -1);
                 px = tileMiddle(ftx);
                 py = tileMiddle(fty);
@@ -5606,10 +5627,7 @@ namespace
         int ttx, tty;
         Portals::tile(plan.from, ftx, fty);
         Portals::tile(plan.to, ttx, tty);
-        const auto leg = [](int ax, int ay, int bx, int by) {
-            const float net = RouteNet::walkTiles(ax, ay, bx, by);
-            return net == -2.0f ? MapMemory::routeTiles(0, ax, ay, bx, by) : net;
-        };
+        const auto leg = &walkTilesBetween;
         const float toPortal = leg(htx, hty, ftx, fty);
         if (toPortal == -1.0f)
         {
