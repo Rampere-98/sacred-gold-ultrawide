@@ -1862,9 +1862,20 @@ std::vector<std::pair<int, int>> MapMemory::doorsThatOpen(int layer, int x0, int
 
 bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out)
 {
+    return routeWithin(layer, fromX, fromY, toX, toY, 48, out);
+}
+
+bool MapMemory::routeWide(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out)
+{
+    return routeWithin(layer, fromX, fromY, toX, toY, 120, out) || routeWithin(layer, fromX, fromY, toX, toY, 240, out);
+}
+
+bool MapMemory::routeWithin(int layer, int fromX, int fromY, int toX, int toY, int kMargin,
+                            std::vector<std::pair<int, int>>& out)
+{
     out.clear();
     // A box around both ends; too far apart for one search (32 bit: keep it to a few MB), no route.
-    constexpr int kMargin = 48, kMaxSide = 1100;
+    constexpr int kMaxSide = 1100;
     const int x0 = std::min(fromX, toX) - kMargin, y0 = std::min(fromY, toY) - kMargin;
     const int w = std::abs(toX - fromX) + 2 * kMargin + 1, h = std::abs(toY - fromY) + 2 * kMargin + 1;
     if (w > kMaxSide || h > kMaxSide)

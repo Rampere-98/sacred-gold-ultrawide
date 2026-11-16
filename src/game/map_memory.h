@@ -19,6 +19,10 @@ namespace MapMemory
     // walkable tiles cheap, never seen ones dearer (they may be anything), unwalkable ones never. Empty and false
     // when there is none or the ends lie too far apart for one search (~1000 tiles).
     bool route(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out);
+    // The same over a wider box around both ends (margins 120 then 240 tiles), for a walk the narrow one found no
+    // way for because the way round leaves it (A8, 2026-11-16: 73 tiles as the crow flies, 590 round the mountains).
+    bool routeWide(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out);
+    bool routeWithin(int layer, int fromX, int fromY, int toX, int toY, int margin, std::vector<std::pair<int, int>>& out);
     // A door seen (the player, 2026-11-11: «ten cuidado con las puertas, es importante que existan»; a script-held
     // door clicked again and again once kept the Daemon shut in 18 min): one that opens (or is open) is a way through
     // for routes, its tile and those around it; one held shut by a script or a key is a wall there, whatever the world

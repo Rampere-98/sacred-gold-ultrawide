@@ -380,6 +380,47 @@ namespace
         }
         if (!reached)
         {
+            // No way inside the 5x5 sectors, but the agent's map may know one that leaves them (the stuck solver,
+            // 2026-11-16, A8 at 2860,3235 for 2916,3290: 73 tiles across a mountain, 590 round it by the west and the
+            // south, which runs out of the grid 11 tiles short and out of the narrow route box): the wide route, and
+            // the walk as far along it as the grid reaches, a shut gate on it ending the stretch before it.
+            static bool s_inFallback = false;
+            // A wide search is a big one: once per goal every 15 s, not every frame the grid has no way.
+            static DWORD s_wideAt = 0;
+            static Cell s_wideGoal{-1, -1};
+            const DWORD wideNow = GetTickCount();
+            const bool wideDue = !(s_wideGoal.x == goal.x && s_wideGoal.y == goal.y && wideNow - s_wideAt < 15000);
+            if (!partial && !s_inFallback && wideDue)
+            {
+                s_wideAt = wideNow;
+                s_wideGoal = goal;
+                std::vector<std::pair<int, int>> wide;
+                if (MapMemory::routeWide(g_grid.layer, start.x, start.y, goal.x, goal.y, wide))
+                {
+                    Cell stop = start;
+                    for (const auto& [x, y] : wide)
+                    {
+                        if (nearEdge(x, y) || !g_grid.walkable(x, y))
+                        {
+                            break;
+                        }
+                        stop = {x, y};
+                    }
+                    if (chebyshev(stop, start.x, start.y) >= 4)
+                    {
+                        LOG("Click walk: no way inside the grid to {},{}: along the wide route as far as {},{} ({} route tiles)",
+                            goal.x, goal.y, stop.x, stop.y, static_cast<int>(wide.size()));
+                        s_inFallback = true;
+                        const bool ok = planUnguarded(start, stop);
+                        s_inFallback = false;
+                        if (ok)
+                        {
+                            g_route.partial = true;
+                        }
+                        return ok;
+                    }
+                }
+            }
             return false;
         }
         auto& cells = g_route.cells;
