@@ -98,6 +98,9 @@ namespace MapMemory
     // The ways in or out and portal ends found on `layer` within `radius` tiles of tile (tx, ty), as tiles: the ways
     // out of a shut-in area (Whereabouts) the agent can try.
     std::vector<std::pair<int, int>> waysOut(int layer, int tx, int ty, int radius, bool entrancesOnly = false);
+    // The merchants whose shop the agent opened, kept on its map (the game's own list holds only the ones it has loaded
+    // around the hero): their tiles on `layer` within `radius` tiles of tile (tx, ty).
+    std::vector<std::pair<int, int>> merchantsNear(int layer, int tx, int ty, int radius);
     // An enemy of kind `type` (its name) met at world (x, y) on `layer`: the encyclopedia drawn on the map, a symbol per
     // kind and place (places of a kind a few squares apart count once), colored by how hard the kind hits, with
     // filters in the menu.

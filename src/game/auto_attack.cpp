@@ -5522,7 +5522,8 @@ namespace
                 // The merchant already gone for keeps twice the reach: the walk's length (wayLength) rises and falls
                 // around the limit as the hero fights its way there, and the choice flipped quest/shop every 10-50 s
                 // (the stuck solver, 2026-11-16, A2: «off to merchant 85e (400 tiles)», six flips in 5 minutes).
-                const double shopReach = (Gear::healingLeft() == 0 ? 400.0 : 150.0) * (m.id == g_shopId ? 2.0 : 1.0) * kTileSize;
+                const double shopReach = (Gear::healingLeft() >= 0 && Gear::healingLeft() <= 2 ? 700.0 : 150.0) *
+                                         (m.id == g_shopId ? 2.0 : 1.0) * kTileSize;
                 if (m.layer == layer && d <= shopReach)
                 {
                     d = wayLength(self->x, self->y, m.x, m.y);    // the walk, not the straight line
@@ -5585,10 +5586,92 @@ namespace
                 g_roamAt = 0;
                 return;
             }
+            // With two healing potions or fewer the merchants the map remembers count too (the stuck solver, 2026-11-16:
+            // A8 sat 67 min at 0 potions with 999 753 gold, died 22 times and logged «no merchant known» after each load
+            // with «5 merchants known» in the list on all 16 lines: five listed, none chosen (reach, route, failed or
+            // layer: the lines below say which), while its map kept three merchants 300 tiles off). It walks to the tile
+            // where a shop once opened; the merchant is in the list by then and the trip goes on as always.
+            if (Gear::healingLeft() >= 0 && Gear::healingLeft() <= 2)
+            {
+                static std::unordered_map<uint64_t, DWORD> s_remFailedAt;
+                static uint64_t s_remKey = 0;
+                const int remTx = static_cast<int>(self->x / kTileSize), remTy = static_cast<int>(self->y / kTileSize);
+                double remWay = 0.0;
+                int remX = 0, remY = 0;
+                bool remFound = false;
+                for (const auto& [mx, my] : MapMemory::merchantsNear(layer, remTx, remTy, 700))
+                {
+                    const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(mx)) << 32) | static_cast<uint32_t>(my);
+                    if (const auto f = s_remFailedAt.find(key); f != s_remFailedAt.end() && now - f->second < 1800000)
+                    {
+                        continue;
+                    }
+                    const double way = wayLength(self->x, self->y, static_cast<int32_t>((mx + 0.5) * kTileSize),
+                                                 static_cast<int32_t>((my + 0.5) * kTileSize));
+                    if (way <= 900.0 * kTileSize && (!remFound || way < remWay))
+                    {
+                        remFound = true;
+                        remWay = way;
+                        remX = mx;
+                        remY = my;
+                    }
+                }
+                if (remFound)
+                {
+                    const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(remX)) << 32) | static_cast<uint32_t>(remY);
+                    if (remWay < 12.0 * kTileSize)
+                    {
+                        // There and the list still has no merchant: not this one (the guess about the list was wrong here).
+                        s_remFailedAt[key] = now;
+                        s_remKey = 0;
+                        LOG("AutoAttack: at the remembered merchant {},{} and none in the game's list: left 30 min", remX, remY);
+                    }
+                    else
+                    {
+                        if (key != s_remKey)
+                        {
+                            s_remKey = key;
+                            LOG("AutoAttack: no merchant in the game's list and {} healing potions: off to the one the map "
+                                "remembers at {},{} ({:.0f} tiles)", Gear::healingLeft(), remX, remY, remWay / kTileSize);
+                        }
+                        g_questTravel = true;
+                        setIntent(Intent::Shop, "no healing potion: to the merchant the map remembers");
+                        const int32_t remWx = static_cast<int32_t>((remX + 0.5) * kTileSize);
+                        const int32_t remWy = static_cast<int32_t>((remY + 0.5) * kTileSize);
+                        if (!travel(now, self, remWx, remWy, g_shopAskAt))
+                        {
+                            s_remFailedAt[key] = now;
+                            s_remKey = 0;
+                        }
+                        MapMemory::setRoute(true, remWx, remWy);
+                        g_roamAt = 0;
+                        return;
+                    }
+                }
+            }
             if (!g_shopTold)
             {
                 g_shopTold = true;
-                LOG("AutoAttack: backpack full and no merchant known within 150 tiles on this layer");
+                LOG("AutoAttack: backpack full and no merchant known within 150 tiles on this layer ({} potions, {} in the "
+                    "game's list)", Gear::healingLeft(), g_merchants.size());
+                int shown = 0;
+                for (const Merchant& m : g_merchants)
+                {
+                    if (shown++ >= 4)
+                    {
+                        break;
+                    }
+                    const auto failed = g_shopFailedAt.find(m.id);
+                    const double straight = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
+                    const double byRoute = m.layer == layer && straight <= 1000.0 * kTileSize
+                                               ? wayLength(self->x, self->y, m.x, m.y) : straight;
+                    const double reach = (Gear::healingLeft() >= 0 && Gear::healingLeft() <= 2 ? 700.0 : 150.0) *
+                                         (m.id == g_shopId ? 2.0 : 1.0);
+                    LOG("AutoAttack: merchant {:x}: layer {} (hero {}), {:.0f} tiles straight, {:.0f} by the map's route, "
+                        "reach {:.0f}, failed {}, useless {}", m.id, m.layer, layer, straight / kTileSize,
+                        byRoute / kTileSize, reach, failed != g_shopFailedAt.end() && now - failed->second < 300000,
+                        g_shopUselessAt.count(m.id) && now - g_shopUselessAt[m.id] < 1800000);
+                }
             }
         }
         // Runes of other classes (Gear::wantsRuneSwap): off to the nearest combo master as to a merchant, a click on

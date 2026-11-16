@@ -7,6 +7,7 @@
 #include "game/auto_attack.h"
 #include "game/combat_learn.h"
 #include "game/frame_hooks.h"
+#include "game/gear.h"
 #include "game/whereabouts.h"
 #include "input/inject.h"
 #include "log.h"
@@ -586,6 +587,20 @@ void AgentSave::onFrame()
     // back there, 2 hours). A save is made where a way on is known: outside.
     const bool shutIn = Whereabouts::area().valid && Whereabouts::area().shutIn;
     const bool allowed = canSave() && !shutIn;
+    // Not with the potions gone and the gold to buy them (the stuck solver, 2026-11-16: A8 wrote GAME17 at 06:52:08 with
+    // none, in the middle of a zone of 15-25 levels; every load put it back there dry and it died 22 times in 43 min;
+    // 35 of the 80 deaths of A1, A3, A6 and A8 came within 4 min of the previous one): the merchant first, the save
+    // after, or at the latest 10 min after it was wanted.
+    if (!g_restartSave && now - s_wantedSince < 600000 && Gear::healingLeft() == 0 && Gear::wantsShop())
+    {
+        static DWORD s_dryToldAt = 0;
+        if (now - s_dryToldAt > 60000)
+        {
+            s_dryToldAt = now;
+            LOG("AgentSave: the save waits (no healing potion: the merchant first)");
+        }
+        return;
+    }
     if (health <= 0 || (foes > 0 && !patient) || !allowed)
     {
         static DWORD s_heldToldAt = 0;

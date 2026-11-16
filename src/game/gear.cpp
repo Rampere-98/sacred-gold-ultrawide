@@ -2981,7 +2981,7 @@ namespace
                     g_tripLeftFull = true;
                     g_noTripUntil = GetTickCount() + 30000;
                 }
-                else if (g_healing <= 2)   // no potion sold there (or gold short): not straight back
+                else if (g_healing <= std::max(2, wantHealing() / 2 - 1))   // no potion sold there (or gold short): not straight back
                 {
                     g_noTripUntil = GetTickCount() + 600000;
                 }
@@ -3194,7 +3194,11 @@ bool Gear::wantsShop()
     // potion was gone, 11-15 enemies at level 4): at 2 left.
     const DWORD asked = g_askPotionsUntil;
     const bool askedNow = asked && static_cast<int>(GetTickCount() - asked) < 0 && g_healing < wantHealing();
-    const bool potions = g_settings.buy && g_healing >= 0 && (g_healing <= 2 || askedNow) && gold >= 200;
+    // At 3 left of a stock of 8 (2 for a stock of 5; the stuck solver, 2026-11-16: a merchant sells about five a visit,
+    // «no healing potion on sale», and the trip at 2 left the hero with 5-7 of 8, gone again in minutes). The same test
+    // holds back the seek and the craftsmen's trips (wantsShop), as it did at 2.
+    const bool potions = g_settings.buy && g_healing >= 0 && (g_healing <= std::max(2, wantHealing() / 2 - 1) || askedNow) &&
+                         gold >= 200;
     return g_ready && g_settings.trips && (g_full || potions) && (!quiet || static_cast<int>(GetTickCount() - quiet) >= 0) &&
            (Act::may(Act::Kind::Sell) || Act::may(Act::Kind::Buy));
 }

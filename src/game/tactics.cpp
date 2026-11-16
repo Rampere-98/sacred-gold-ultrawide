@@ -1384,8 +1384,11 @@ namespace
                 const int left = Gear::healingLeft();
                 const bool low = h && h->maxHealth > 0 && h->health > 0 && h->health * 100 < h->maxHealth * 35;
                 const bool dying = low && h->health * 100 < h->maxHealth * 20;
+                // The last potion is the hero's unless a hireling is dying (the stuck solver, 2026-11-16: the hirelings
+                // drank 74, 81, 32 and 27 potions against the hero's 86, 189, 54 and 94 on A1, A3, A6 and A8; one
+                // merchant sells about five a visit and the hero was left with none a few minutes later).
                 if (low && left >= 1 &&
-                    ((left >= 3 && s.health * 2 >= s.maxHealth) || s.health * 10 >= s.maxHealth * 8 ||
+                    ((left >= 3 && s.health * 2 >= s.maxHealth) || (left >= 2 && s.health * 10 >= s.maxHealth * 8) ||
                      (dying && s.health * 10 >= s.maxHealth * 6)))
                 {
                     hurtHireling = true;
