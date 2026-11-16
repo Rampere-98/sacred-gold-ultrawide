@@ -607,6 +607,17 @@ namespace
     };
     PresetState g_presets;
     std::atomic<bool> g_presetsWorking{false};
+    // The taskbar's art slot selection, as the keys 6-0 (Manolito, block BF: ENG 006E1A20, thiscall(taskbar, u16 slot,
+    // u32 net), ret 8). After the bar is written the selected slot is selected again, or the engine's right click
+    // (+0x58/+0x5A) keeps the art that was there before (the game's own UI does the same after a drop). Resolved on its
+    // own: a miss turns off only this.
+    uintptr_t g_selectArtSlot = 0;
+    const Sig::Entry kPresetSigs[] = {
+        {"selectArtSlot", "53 56 8B F1 57 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 85 C0 74 2D 66 8B 88 FE 03 00 00 51 8D 88 A8 03 00 00",
+            0, Sig::Take::Match, &g_selectArtSlot},
+    };
+    using SelectArtSlot = void(__fastcall*)(void* taskbar, void*, uint16_t slot, uint32_t net);
+    constexpr size_t kSelectedArtSlot = 0xD5A;
 
     std::wstring presetsPath()
     {
@@ -758,7 +769,7 @@ namespace
             }
             if (p.set)
             {
-                int put = 0, refused = 0, left = 0;
+                int put = 0, refused = 0, emptied = 0;
                 for (int slot = 0; slot < shown; ++slot)
                 {
                     const uint8_t* want = p.entries[slot];
@@ -770,7 +781,13 @@ namespace
                     const uint32_t art = *reinterpret_cast<const uint32_t*>(want + 4);
                     if (!kind)
                     {
-                        ++left;     // no clean way known yet to empty a slot (asked of Manolito): left as it is
+                        // Empty in the preset: emptied as clearArtSlot (ENG 005D96C0) leaves it; the same memory in a
+                        // game of one (Manolito, block BF; online it would send «put» instead of «take»).
+                        const uint32_t none[4] = {};
+                        reinterpret_cast<SetSlot>(g_setSlot)(player, nullptr, static_cast<uint32_t>(slot), 0, 0, none);
+                        g_bar.placed[slot] = 0;
+                        g_bar.playerUntil[slot] = now + kPlayerHoldMs;
+                        ++emptied;
                         continue;
                     }
                     const bool learned = std::any_of(facts.begin(), facts.end(),
@@ -788,11 +805,25 @@ namespace
                     g_bar.playerUntil[slot] = now + kPlayerHoldMs;
                     ++put;
                 }
+                // The selected slot selected again, as the game does after a drop: the right click casts what the bar
+                // now shows.
+                bool reselected = false;
+                if ((put || emptied) && g_selectArtSlot)
+                {
+                    const uint16_t selected = *reinterpret_cast<const uint16_t*>(player + kSelectedArtSlot);
+                    if (selected < shown)
+                    {
+                        reinterpret_cast<SelectArtSlot>(g_selectArtSlot)(taskbar, nullptr, selected, 1);
+                        reselected = true;
+                    }
+                }
                 const DWORD oldest = g_presets.restores[g_presets.nextRestore];
                 g_presets.restores[g_presets.nextRestore] = now ? now : 1;
                 g_presets.nextRestore = (g_presets.nextRestore + 1) % 8;
-                LOG("ArtPresets: weapon slot {} -> {}: {} arts put back, {} not learned, {} left (no way to empty one){}",
-                    g_presets.lastSlot + 1, weapon + 1, put, refused, left,
+                LOG("ArtPresets: weapon slot {} -> {}: {} arts put back, {} emptied, {} not learned, art slot {} {}{}",
+                    g_presets.lastSlot + 1, weapon + 1, put, emptied, refused,
+                    *reinterpret_cast<const uint16_t*>(player + kSelectedArtSlot) + 1,
+                    reselected ? "selected again" : "not selected again",
                     oldest && now - oldest < 60000 ? " (8 switches within a minute)" : "");
             }
             else
@@ -868,6 +899,11 @@ namespace
         g_settings.swap = GetPrivateProfileIntW(L"Build", L"SwapBar", 1, ini.c_str()) != 0;
         g_settings.presets = GetPrivateProfileIntW(L"Build", L"ArtPresets", 0, ini.c_str()) != 0;
         g_ready = Sig::resolve(kSigs) == 0;
+        if (Sig::resolve(kPresetSigs) != 0)
+        {
+            g_selectArtSlot = 0;
+        }
+        LOG("HeroBuild: art presets {} (selectArtSlot {:x})", g_settings.presets ? "on" : "off", g_selectArtSlot);
         LOG("HeroBuild: {} (attributes {}, skills {}, learn {})", g_ready ? "ready" : "not available (signatures)",
             g_settings.attributes, g_settings.skills, g_settings.learn);
         ModkitMenu::add({"Progreso del héroe", &drawMenu, &saveMenu});
