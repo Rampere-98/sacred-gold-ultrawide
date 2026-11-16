@@ -3439,10 +3439,11 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
                     continue;
                 }
                 float bonus = 0.0f;
+                const int weapons = Gear::slotWeapons(slot);
                 for (uint32_t art : arts)
                 {
                     const auto f = std::find_if(facts.begin(), facts.end(), [&](const Tactics::ArtFact& a) { return art && a.art == art; });
-                    if (f == facts.end() || (riding && !f->mounted))
+                    if (f == facts.end() || (riding && !f->mounted) || !Gear::artFitsWeapons(art, weapons))
                     {
                         continue;
                     }
@@ -3492,6 +3493,23 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
     g_switchTo = static_cast<uint32_t>(best);
     Inject::engineCall(&switchSlot, nullptr);
     return true;
+}
+
+int Gear::slotWeapons(int slot)
+{
+    if (!g_ready || !g_slotsReady || slot < 0 || slot >= 5)
+    {
+        return 0;
+    }
+    cObjectManager* objects = cObjectManager::instance();
+    cCreature* hero = objects ? objects->hero() : nullptr;
+    const uint8_t* pack = hero ? entryOf(static_cast<int>(hero->id)) : nullptr;
+    if (!pack)
+    {
+        return 0;
+    }
+    const uint32_t a = slotItem(pack, slot, 0), b = slotItem(pack, slot, 1);
+    return 1 | (slotRanged(pack, slot) ? 2 : 0) | ((a && twoHanded(a)) || (b && twoHanded(b)) ? 4 : 0);
 }
 
 int Gear::healingLeft()

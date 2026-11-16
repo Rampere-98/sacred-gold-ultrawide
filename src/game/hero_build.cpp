@@ -2,6 +2,7 @@
 #include "game/act.h"
 #include "game/combat_learn.h"
 #include "game/combat_state.h"
+#include "game/gear.h"
 #include "game/tactics.h"
 #include "game/mind.h"
 #include "config/tactics.h"
@@ -728,6 +729,7 @@ namespace
                 continue;
             }
             const bool group = lean++ % 2 == 0;
+            const int weapons = Gear::slotWeapons(w);   // the arrows only with a bow, Recoil only two-handed
             std::vector<const Tactics::ArtFact*> pick;
             const auto add = [&](const std::vector<const Tactics::ArtFact*>& from, size_t most) {
                 for (const Tactics::ArtFact* f : from)
@@ -736,7 +738,7 @@ namespace
                     {
                         return;
                     }
-                    if (std::none_of(pick.begin(), pick.end(), [&](auto* q) { return q->art == f->art; }))
+                    if (Gear::artFitsWeapons(f->art, weapons) && std::none_of(pick.begin(), pick.end(), [&](auto* q) { return q->art == f->art; }))
                     {
                         pick.push_back(f);
                         --most;

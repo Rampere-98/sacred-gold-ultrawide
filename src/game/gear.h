@@ -66,6 +66,24 @@ namespace Gear
     // the enemy's resistances), switched to as the keys 1-5 do when it beats the active one by 15 %. True if switched.
     // Call with the hero at rest (no art under way).
     bool chooseWeaponFor(uint32_t targetId);
+    // Weapon slot `slot`'s weapons, for the arts that need a kind of weapon: bit 0 read, bit 1 a ranged weapon in it,
+    // bit 2 a two-handed one. 0: not known.
+    int slotWeapons(int slot);
+    // Whether art `art` works with a slot's weapons (slotWeapons): the Wood Elf's arrows (1004-1008) only with a bow
+    // or crossbow, the executors skip them otherwise without a word; Recoil and Vehemence (1083, 1084) only with a
+    // two-handed weapon (Manolito, block BG, static: moveInfo+0x74 bits 1 and 2). The others with any.
+    inline bool artFitsWeapons(uint32_t art, int weapons)
+    {
+        if (art >= 1004 && art <= 1008)
+        {
+            return (weapons & 2) != 0;
+        }
+        if (art == 1083 || art == 1084)
+        {
+            return (weapons & 4) != 0;
+        }
+        return true;
+    }
     // The active weapon slot's expected blow against creature `targetId` (its resistances and the chance to hit it
     // counted); -1 if unknown.
     float expectedHit(uint32_t targetId);
