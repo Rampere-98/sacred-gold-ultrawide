@@ -6638,6 +6638,48 @@ namespace
                         Findings::note("quest", self->x, self->y, "quest creature {:x} would not speak after 6 tries", who);
                         g_talkedAt[who] = now;
                         g_talkId = 0;
+                        // What it is, for the next look (the stuck solver, 2026-11-16, A2: 18 orders at 0 tiles from 9a6,
+                        // quest R15NQ02 «Los Planes de la Hermandad», no dialog, and an unspoken-to sign near that the
+                        // log never named): its side, its dialog index, its flags and the signs about it.
+                        {
+                            const uint8_t* nb = reinterpret_cast<const uint8_t*>(npc);
+                            LOG("AutoAttack: quest creature {:x} would not speak: side {}, dialog {}, flags {:x}/{:x}, health {}, "
+                                "hero mode {:x}",
+                                who, *reinterpret_cast<const uint32_t*>(nb + kSide), *reinterpret_cast<const uint32_t*>(nb + 0x245),
+                                *reinterpret_cast<const uint32_t*>(nb + 0x14), *reinterpret_cast<const uint32_t*>(nb + 0x200),
+                                *reinterpret_cast<const int32_t*>(nb + 0x4D8), *(reinterpret_cast<const uint8_t*>(self) + 0xFC));
+                            bool otherSign = false;
+                            for (const Sign& sign : g_signs)
+                            {
+                                const double fromHero = std::hypot(static_cast<double>(sign.x - self->x),
+                                                                   static_cast<double>(sign.y - self->y)) / kTileSize;
+                                LOG("AutoAttack: sign {:x} ({}) at tile {},{}, {:.0f} tiles from the hero, {:.0f} from {:x}", sign.id,
+                                    sign.kind == GoalKind::Offer ? "quest offered" : "report", static_cast<int>(sign.x / kTileSize),
+                                    static_cast<int>(sign.y / kTileSize), fromHero,
+                                    std::hypot(static_cast<double>(sign.x - npc->x), static_cast<double>(sign.y - npc->y)) / kTileSize,
+                                    who);
+                                otherSign = otherSign || ((sign.id & 0xFFFF) != (who & 0xFFFF) && fromHero < 60.0 &&
+                                                          !talkedLately(sign.id, now) && !isHireling(sign.id));
+                            }
+                            // Another creature with a sign within reach: this goal waits 5 min and the book moves on to
+                            // that one (else 6 min «looking around it» and 15 more parked before the book got there).
+                            if (otherSign)
+                            {
+                                const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(qx / kTileSize)) << 32) |
+                                                     static_cast<uint32_t>(qy / kTileSize);
+                                g_travelBlocked[key] = now + 300000;
+                                if (!g_questBook.empty())
+                                {
+                                    const QuestGoal& bg = g_questBook.front();
+                                    g_travelBlocked[(static_cast<uint64_t>(static_cast<uint32_t>(bg.x / kTileSize)) << 32) |
+                                                    static_cast<uint32_t>(bg.y / kTileSize)] = now + 300000;
+                                }
+                                LOG("AutoAttack: another creature under a quest sign near: the goal at tile {},{} left 5 min",
+                                    static_cast<int>(qx / kTileSize), static_cast<int>(qy / kTileSize));
+                                questHere = false;
+                                g_roamAt = 0;
+                            }
+                        }
                     }
                     else
                     {
